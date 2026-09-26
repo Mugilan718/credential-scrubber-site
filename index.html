@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Credential Scrubber — Never leak a secret to AI again</title>
+<meta name="description" content="Scan your code for hardcoded credentials before you share it with AI, teammates, or the world. Free, open-source, runs entirely on your device." />
+<link rel="icon" type="image/svg+xml" href="favicon.svg" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Credential Scrubber — Never leak a secret to AI again" />
+<meta property="og:description" content="Scan your code for hardcoded credentials before you share it with AI, teammates, or the world. Free, open-source, runs entirely on your device." />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Credential Scrubber — Never leak a secret to AI again" />
+<meta name="twitter:description" content="Scan your code for hardcoded credentials before you share it with AI, teammates, or the world. Free, open-source, runs entirely on your device." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="topnav-brand">Credential Scrubber</div>
+  <button class="nav-toggle" id="navToggle" type="button" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="navLinks">
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+  </button>
+  <div class="topnav-links" id="navLinks">
+    <a href="#comic">How it leaks</a>
+    <a href="#how-it-works">How it works</a>
+    <a href="#research">Research</a>
+    <a href="#get-it">Get it</a>
+    <a href="https://github.com/Mugilan718/credential-scrubber" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</nav>
+
+<!-- ===================== HERO — the one bold moment ===================== -->
+<section class="hero">
+  <div class="hero-glow"></div>
+  <canvas id="hero-canvas"></canvas>
+  <div class="hero-content">
+    <h1>Your code has secrets.<br/>Don't hand them to AI.</h1>
+    <p class="hero-sub">Credential Scrubber finds hardcoded passwords, API keys, and connection strings in your code, and masks them — before you paste anything into an AI chat, a ticket, or a pull request.</p>
+    <div class="hero-ctas">
+      <a href="scanner/index.html" class="btn-glow">Use it online — free, nothing uploaded</a>
+      <a href="https://github.com/Mugilan718/credential-scrubber/releases/download/v1.0.0/CredentialScrubber.exe" target="_blank" rel="noopener" class="btn-ghost">Download for Windows</a>
+    </div>
+    <p class="hero-trust">Runs entirely on your device. Your code is never sent anywhere — online or offline.</p>
+  </div>
+</section>
+
+<!-- ===================== COMIC STRIP ===================== -->
+<section class="comic" id="comic">
+  <div class="section-intro">
+    <h2>How a secret actually leaks</h2>
+    <p>It happens faster than you'd think — and it only takes once.</p>
+  </div>
+
+  <div class="comic-strip">
+
+    <div class="panel panel-calm reveal">
+      <svg viewBox="0 0 300 260" class="panel-art">
+        <defs>
+          <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#FFE8B8"/><stop offset="100%" stop-color="#FFCF8C"/>
+          </linearGradient>
+        </defs>
+        <rect width="300" height="260" fill="url(#g1)"/>
+        <rect x="30" y="150" width="240" height="16" rx="5" fill="#4A3B2A"/>
+        <rect x="55" y="90" width="100" height="65" rx="6" fill="#5B4636"/>
+        <circle cx="150" cy="55" r="28" fill="#F4A26B"/>
+        <rect x="124" y="80" width="52" height="58" rx="12" fill="#E8574A"/>
+        <rect x="65" y="98" width="80" height="48" rx="4" fill="#1B1C22"/>
+        <text x="105" y="126" font-family="monospace" font-size="9" fill="#7CE3C6" text-anchor="middle">code editor</text>
+        <g class="thought-bubble">
+          <circle cx="215" cy="45" r="6" fill="#fff" opacity="0.9"/>
+          <circle cx="228" cy="32" r="9" fill="#fff" opacity="0.9"/>
+          <ellipse cx="252" cy="18" rx="42" ry="24" fill="#fff" opacity="0.95"/>
+          <text x="252" y="24" font-size="16" text-anchor="middle">🤔💬</text>
+        </g>
+      </svg>
+      <div class="bubble">"This bug is weird... let me ask AI for help."</div>
+    </div>
+
+    <div class="panel panel-warn reveal">
+      <svg viewBox="0 0 300 260" class="panel-art">
+        <defs>
+          <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#3A2A0F"/><stop offset="100%" stop-color="#1B1C22"/>
+          </linearGradient>
+        </defs>
+        <rect width="300" height="260" fill="url(#g2)"/>
+        <rect x="24" y="40" width="252" height="180" rx="8" fill="#0D0E12"/>
+        <text x="44" y="78" font-family="monospace" font-size="11" fill="#8A9199">spring.datasource.url=</text>
+        <text x="44" y="100" font-family="monospace" font-size="11" fill="#8A9199">username=admin</text>
+        <rect x="38" y="108" width="200" height="20" rx="4" fill="#3A2A0F" class="pulse-warn"/>
+        <text x="44" y="123" font-family="monospace" font-size="12" font-weight="700" fill="#FFC93C">password=Sup3rSecret!</text>
+        <text x="44" y="146" font-family="monospace" font-size="11" fill="#8A9199">port=5432</text>
+        <circle cx="248" cy="118" r="22" fill="#FFC93C" opacity="0.25" class="pulse-ring"/>
+        <text x="248" y="126" font-size="22" text-anchor="middle">⚠️</text>
+      </svg>
+      <div class="bubble bubble-warn">That password is sitting right there in plain text.</div>
+    </div>
+
+    <div class="panel panel-danger reveal">
+      <svg viewBox="0 0 300 260" class="panel-art">
+        <defs>
+          <linearGradient id="g3" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#5A1220"/><stop offset="100%" stop-color="#2A0A10"/>
+          </linearGradient>
+        </defs>
+        <rect width="300" height="260" fill="url(#g3)"/>
+        <rect x="20" y="88" width="110" height="60" rx="6" fill="#0D0E12"/>
+        <text x="75" y="115" font-family="monospace" font-size="9" fill="#FFC93C" text-anchor="middle">password=</text>
+        <text x="75" y="129" font-family="monospace" font-size="9" fill="#FFC93C" text-anchor="middle">Sup3r!</text>
+        <path d="M135 118 L200 118" stroke="#FF6B6B" stroke-width="4" marker-end="url(#arrow2)" class="dash-flow"/>
+        <defs><marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#FF6B6B"/></marker></defs>
+        <circle cx="235" cy="118" r="42" fill="#3B2560"/>
+        <circle cx="222" cy="108" r="6" fill="#fff"/>
+        <circle cx="248" cy="108" r="6" fill="#fff"/>
+        <path d="M218 132 Q235 144 252 132" stroke="#fff" stroke-width="3" fill="none"/>
+        <text x="235" y="65" font-size="24" text-anchor="middle">💬</text>
+        <text x="150" y="230" font-size="13" fill="#FF6B6B" text-anchor="middle" font-weight="700" letter-spacing="2">NO UNDO</text>
+      </svg>
+      <div class="bubble bubble-danger">Pasted straight into the AI chat. Gone — no undo.</div>
+    </div>
+
+    <div class="panel panel-hero reveal">
+      <svg viewBox="0 0 300 260" class="panel-art">
+        <defs>
+          <radialGradient id="g4" cx="50%" cy="50%" r="60%">
+            <stop offset="0%" stop-color="#0F2E2C"/><stop offset="100%" stop-color="#0A0E17"/>
+          </radialGradient>
+        </defs>
+        <rect width="300" height="260" fill="url(#g4)"/>
+        <circle cx="150" cy="130" r="75" fill="none" stroke="#00E5C7" stroke-width="2.5" opacity="0.4" class="ring-spin"/>
+        <circle cx="150" cy="130" r="55" fill="#00E5C7" opacity="0.15" class="pulse-glow"/>
+        <rect x="118" y="98" width="64" height="64" rx="10" fill="url(#shieldGrad)" class="pulse-glow-strong"/>
+        <defs>
+          <linearGradient id="shieldGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#00E5C7"/><stop offset="100%" stop-color="#7C4DFF"/>
+          </linearGradient>
+        </defs>
+        <rect x="134" y="120" width="32" height="6" rx="2" fill="#0A0E17"/>
+        <rect x="134" y="133" width="32" height="6" rx="2" fill="#0A0E17"/>
+        <rect x="134" y="146" width="18" height="6" rx="2" fill="#0A0E17"/>
+      </svg>
+      <div class="bubble bubble-hero">Credential Scrubber catches it first — before it ever leaves your machine.</div>
+    </div>
+
+    <div class="panel panel-calm reveal">
+      <svg viewBox="0 0 300 260" class="panel-art">
+        <defs>
+          <linearGradient id="g5" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#C8F5E9"/><stop offset="100%" stop-color="#9FE8D6"/>
+          </linearGradient>
+        </defs>
+        <rect width="300" height="260" fill="url(#g5)"/>
+        <rect x="24" y="50" width="252" height="160" rx="8" fill="#0D0E12"/>
+        <text x="44" y="85" font-family="monospace" font-size="11" fill="#8A9199">spring.datasource.url=</text>
+        <text x="44" y="107" font-family="monospace" font-size="11" fill="#8A9199">username=admin</text>
+        <rect x="40" y="116" width="150" height="18" rx="4" fill="#0D0D0B" class="reveal-mask"/>
+        <text x="44" y="158" font-family="monospace" font-size="11" fill="#8A9199">port=5432</text>
+      </svg>
+      <div class="bubble">The secret is masked. The rest of the code is untouched.</div>
+    </div>
+
+    <div class="panel panel-good reveal">
+      <svg viewBox="0 0 300 260" class="panel-art">
+        <defs>
+          <linearGradient id="g6" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#B8F5DC"/><stop offset="100%" stop-color="#7FE0BC"/>
+          </linearGradient>
+        </defs>
+        <rect width="300" height="260" fill="url(#g6)"/>
+        <circle cx="150" cy="90" r="32" fill="#F4A26B" class="bounce-happy"/>
+        <path d="M126 98 Q150 118 174 98" stroke="#3A2A1A" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+        <rect x="118" y="122" width="64" height="75" rx="12" fill="#00A88C" class="bounce-happy"/>
+        <path d="M96 148 L118 165" stroke="#F4A26B" stroke-width="9" stroke-linecap="round"/>
+        <circle cx="90" cy="142" r="11" fill="#F4A26B"/>
+        <path d="M84 140 L94 142 L86 150" stroke="#3A2A1A" stroke-width="2.5" fill="none"/>
+        <text x="230" y="70" font-size="26" class="confetti">🎉</text>
+        <text x="60" y="60" font-size="20" class="confetti-delay">✨</text>
+      </svg>
+      <div class="bubble bubble-good">Safe to share. Crisis averted.</div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ===================== WHY THIS MATTERS ===================== -->
+<section class="stakes">
+  <div class="section-intro">
+    <h2>Why this actually matters</h2>
+    <p>A hardcoded credential doesn't stay hidden forever — and the cost of one getting out is rarely small.</p>
+  </div>
+
+  <div class="stakes-grid">
+    <div class="stakes-card stakes-bad">
+      <h3>Without scanning first</h3>
+      <ul>
+        <li>A pasted API key can be used by anyone who sees that conversation — including logs, screenshots, or shared chat histories</li>
+        <li>Cloud credentials (AWS, GCP, Azure) can rack up real charges in someone else's hands within hours</li>
+        <li>A leaked database password is an open door to every record inside it</li>
+        <li>Once shared, a secret can't be "un-shared" — rotating it after the fact is the only fix, and only if you notice in time</li>
+      </ul>
+    </div>
+    <div class="stakes-card stakes-good">
+      <h3>With Credential Scrubber</h3>
+      <ul>
+        <li>Every hardcoded secret is found and masked before it ever leaves your machine</li>
+        <li>Works the same whether you're pasting into an AI chat, a support ticket, or a public repo</li>
+        <li>Nothing is uploaded, logged, or stored anywhere outside your own device</li>
+        <li>Free, open-source, and fast enough to run before every share — not just once a year</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===================== HOW IT WORKS ===================== -->
+<section class="how" id="how-it-works">
+  <div class="section-intro">
+    <h2>Two ways to use it</h2>
+    <p>Same detection engine underneath. Pick whichever fits how you work.</p>
+  </div>
+
+  <div class="how-grid">
+    <div class="how-card">
+      <h3>Online — no install</h3>
+      <p>Open it in your browser, drop in a folder, get a cleaned copy back. Everything happens on your own device using your browser's own file access — nothing is ever uploaded to a server, even though there's nothing to install.</p>
+      <a href="scanner/index.html" class="link-arrow">Try it now</a>
+    </div>
+    <div class="how-card">
+      <h3>Downloadable app</h3>
+      <p>A full desktop app for Windows: manage multiple projects, track scan history over time, edit detection rules, and scan only what changed since your last commit.</p>
+      <a href="#get-it" class="link-arrow">Download</a>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== RESEARCH ===================== -->
+<section class="research" id="research">
+  <div class="section-intro">
+    <h2>Does sanitized code still work for an AI coding agent?</h2>
+    <p>Masking a secret is only useful if the AI can still do its job without it. So we ran a controlled experiment: the same AI coding agent, given the same files, once with the real values and once with the sanitized version — then scored by hand to see if anything was lost.</p>
+  </div>
+
+  <div class="research-stats">
+    <div class="stat-card">
+      <div class="stat-number">9</div>
+      <div class="stat-label">source files</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">6</div>
+      <div class="stat-label">task types</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">48</div>
+      <div class="stat-label">paired comparisons</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">96</div>
+      <div class="stat-label">AI responses</div>
+    </div>
+  </div>
+
+  <div class="research-block">
+    <h3>What we found</h3>
+    <p>Across 48 matched comparisons, most of what we measured held up. Correctness and consistency were essentially unchanged between the two versions. Usefulness showed a statistically distinguishable difference in a minority of cases — 7 of 48 pairs — concentrated in two kinds of tasks (generating tests and suggesting refactors), where the sanitized version scored lower. Completeness showed a similar, smaller pattern that didn't clear our significance threshold. We also ran a control where the "sanitized" file was byte-identical to the original — and one of its pairs still changed, which tells us some of this variation comes from the AI itself, not just from sanitization. Across all 96 responses, we found zero cases of the AI merging two different secrets together, splitting one secret into two, reconstructing a real value, or generating code that wouldn't run because of a placeholder.</p>
+  </div>
+
+  <div class="research-block">
+    <h3>What we didn't test</h3>
+    <p>This is one evaluation pass, on one AI model, over 9 hand-picked files — not a large study, and not a claim that this works the same way for every model, every codebase, or every kind of secret. It doesn't test resistance to a malicious AI agent, and it doesn't prove sanitization caused every difference we saw — see the control above. We're publishing the full methodology and every score so you can check our work.</p>
+  </div>
+
+  <div class="research-cta">
+    <a href="https://github.com/Mugilan718/credential-scrubber/blob/main/ai-evaluation/experiment/analysis/results_and_discussion.md" target="_blank" rel="noopener noreferrer" class="link-arrow">Read the full evaluation →</a>
+  </div>
+</section>
+
+<!-- ===================== SAFETY ===================== -->
+<section class="safety">
+  <div class="section-intro">
+    <h2>How it keeps you safe</h2>
+  </div>
+  <ul class="safety-list">
+    <li><strong>Nothing leaves your device.</strong> Whether you use the browser version or the desktop app, all scanning happens locally. No server ever sees your code.</li>
+    <li><strong>Originals are never touched.</strong> You always get a separate, cleaned copy — your real files are never modified or deleted.</li>
+    <li><strong>Open source.</strong> The full detection logic is public — you don't have to trust a black box.</li>
+    <li><strong>If it finds a real secret, rotate it.</strong> Masking a credential for sharing doesn't undo the fact that it existed in your code. Treat any real finding as compromised.</li>
+  </ul>
+</section>
+
+<!-- ===================== GET IT ===================== -->
+<section class="get-it" id="get-it">
+  <h2>Get started</h2>
+  <div class="hero-ctas">
+    <a href="scanner/index.html" class="btn-glow">Use it online now</a>
+    <a href="https://github.com/Mugilan718/credential-scrubber/releases/download/v1.0.0/CredentialScrubber.exe" target="_blank" rel="noopener" class="btn-ghost">Download for Windows (.exe)</a>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <p>Free and open-source. Not a substitute for rotating a credential that's already been exposed.</p>
+  <p class="footer-links"><a href="https://github.com/Mugilan718/credential-scrubber" target="_blank" rel="noopener noreferrer">View source on GitHub →</a></p>
+  <p class="footer-links"><a href="https://github.com/Mugilan718/credential-scrubber/blob/main/ai-evaluation/experiment/analysis/results_and_discussion.md" target="_blank" rel="noopener noreferrer">Read the AI evaluation research →</a></p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="js/hero-3d.js"></script>
+<script src="js/interactions.js"></script>
+</body>
+</html>

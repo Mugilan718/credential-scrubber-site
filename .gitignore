@@ -1,0 +1,17 @@
+# OS-specific junk
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Editor/IDE folders
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

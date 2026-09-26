@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Credential Scrubber — Online Scanner</title>
+<meta name="description" content="Scan a project folder for hardcoded credentials right in your browser. Nothing is uploaded - scanning and sanitizing happen entirely on your device." />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Credential Scrubber — Online Scanner" />
+<meta property="og:description" content="Scan a project folder for hardcoded credentials right in your browser. Nothing is uploaded - scanning and sanitizing happen entirely on your device." />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Credential Scrubber — Online Scanner" />
+<meta name="twitter:description" content="Scan a project folder for hardcoded credentials right in your browser. Nothing is uploaded - scanning and sanitizing happen entirely on your device." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<nav class="topnav">
+  <a href="../index.html" class="topnav-brand">Credential Scrubber</a>
+  <div class="topnav-links">
+    <span class="badge-local">Runs in your browser — nothing uploaded</span>
+  </div>
+</nav>
+
+<main class="scanner-main">
+
+  <div id="dropZone" class="drop-zone">
+    <div class="drop-icon">📁</div>
+    <h1>Drop a project folder here</h1>
+    <p>Or click to choose one. Scanning happens entirely on your device — nothing is sent anywhere, ever.</p>
+    <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
+    <button class="btn-glow" id="chooseBtn">Choose folder</button>
+    <p class="drop-note">Works best in Chrome/Edge. Very large projects (thousands of files) may take a moment.</p>
+  </div>
+
+  <div id="scanningState" class="scanning-state hidden">
+    <div class="spinner"></div>
+    <p id="scanningText">Reading files…</p>
+  </div>
+
+  <div id="resultsState" class="results-state hidden">
+    <div class="results-summary">
+      <div><strong id="filesScannedCount">0</strong><span>files scanned</span></div>
+      <div><strong id="redactionCount">0</strong><span>redactions</span></div>
+      <button class="btn-glow" id="downloadBtn">Download sanitized copy (.zip)</button>
+      <button class="btn-ghost" id="startOverBtn">Scan another folder</button>
+    </div>
+
+    <div id="resultsTable" class="results-table"></div>
+  </div>
+
+</main>
+
+<footer class="scanner-footer">
+  <p>This browser version covers single-line detection across config files and code. For multi-line concatenated secrets and project history, use the <a href="../index.html#get-it">downloadable app</a>.</p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="../scanner-engine.js"></script>
+<script src="scanner-ui.js"></script>
+</body>
+</html>
