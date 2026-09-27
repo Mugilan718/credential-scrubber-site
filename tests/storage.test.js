@@ -18,6 +18,7 @@ const {
   saveScanHistoryEntry, listScanHistory, clearScanHistory,
   setIgnore, removeIgnore, getIgnoreMap,
   getRuleOverrides, saveRuleOverrides, resetRuleOverrides,
+  saveFolderHandle, getFolderHandle, clearFolderHandle,
 } = require(path.join(__dirname, "..", "scanner", "storage.js"));
 
 let passed = 0;
@@ -235,6 +236,85 @@ await test("an existing v1 database (scanHistory + ignores only) upgrades to v2 
   await saveRuleOverrides(dbV2, { keyPatternsAdded: ["custom"], keyPatternsRemoved: [] });
   const overrides = await getRuleOverrides(dbV2);
   assert.deepStrictEqual(overrides.keyPatternsAdded, ["custom"]);
+});
+
+console.log("\nRemembered folder handle (Phase 5):");
+
+await test("getFolderHandle() returns null when nothing has been saved yet", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  const record = await getFolderHandle(db);
+  assert.strictEqual(record, null);
+});
+
+await test("saveFolderHandle() + getFolderHandle() round-trips the handle object and its display name", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  const fakeHandle = { kind: "directory", name: "my-project" }; // stand-in for a real FileSystemDirectoryHandle
+  await saveFolderHandle(db, fakeHandle, "my-project");
+  const record = await getFolderHandle(db);
+  assert.strictEqual(record.name, "my-project");
+  assert.deepStrictEqual(record.handle, fakeHandle);
+});
+
+await test("saveFolderHandle() overwrites the previously remembered folder (single record, not a list)", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  await saveFolderHandle(db, { kind: "directory", name: "first" }, "first");
+  await saveFolderHandle(db, { kind: "directory", name: "second" }, "second");
+  const record = await getFolderHandle(db);
+  assert.strictEqual(record.name, "second");
+});
+
+await test("clearFolderHandle() forgets the remembered folder", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  await saveFolderHandle(db, { kind: "directory", name: "x" }, "x");
+  await clearFolderHandle(db);
+  assert.strictEqual(await getFolderHandle(db), null);
+});
+
+await test("remembered folder persists after closing and reopening the 'tab'", async () => {
+  resetFakeIndexedDB();
+  const dbBeforeClose = await openScannerDB();
+  await saveFolderHandle(dbBeforeClose, { kind: "directory", name: "persisted" }, "persisted");
+  const dbAfterReopen = await openScannerDB();
+  const record = await getFolderHandle(dbAfterReopen);
+  assert.strictEqual(record.name, "persisted");
+});
+
+await test("an existing v2 database (no folderHandle store) upgrades to v3 without losing data, and gains a working folderHandle store", async () => {
+  resetFakeIndexedDB();
+
+  // Manually open at v2 with only the three Phase 3/4 stores, exactly as
+  // an existing user's browser would already have on disk.
+  const dbV2 = await new Promise((resolve, reject) => {
+    const req = indexedDB.open("credential-scrubber-scanner", 2);
+    req.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      db.createObjectStore("scanHistory", { keyPath: "id", autoIncrement: true });
+      db.createObjectStore("ignores", { keyPath: "ignoreKey" });
+      db.createObjectStore("ruleOverrides", { keyPath: "id" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  await new Promise((resolve, reject) => {
+    const tx = dbV2.transaction("ruleOverrides", "readwrite");
+    const r = tx.objectStore("ruleOverrides").put({ id: "default", keyPatternsAdded: ["preexisting"], keyPatternsRemoved: [] });
+    r.onsuccess = () => resolve();
+    r.onerror = () => reject(r.error);
+  });
+
+  // Phase 5's code loads and calls storage.js's openScannerDB() - now
+  // requesting v3.
+  const dbV3 = await openScannerDB();
+  const overrides = await getRuleOverrides(dbV3);
+  assert.deepStrictEqual(overrides.keyPatternsAdded, ["preexisting"], "pre-existing Phase 4 rule overrides survived the upgrade");
+
+  await saveFolderHandle(dbV3, { kind: "directory", name: "new-store-works" }, "new-store-works");
+  const record = await getFolderHandle(dbV3);
+  assert.strictEqual(record.name, "new-store-works");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

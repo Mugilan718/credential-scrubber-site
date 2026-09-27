@@ -840,6 +840,62 @@ function isLikelyTextFile(path) {
 }
 
 // ---------------------------------------------------------------------
+// File System Access API directory walking (Phase 5) - pure, storage-
+// and DOM-independent logic for recursively reading a
+// FileSystemDirectoryHandle's contents into the same {path, content}
+// shape scanFiles() already expects. Kept here (not in scanner-ui.js) so
+// it's testable under plain Node with a fake directory-handle tree (see
+// tests/fake-fs-access.js) - the real File System Access API itself only
+// exists in a browser (Chromium-based ones today) and cannot be exercised
+// here; see this project's final summary for what is and isn't covered
+// by an actual live test versus this pure-logic unit test.
+//
+// `dirHandle` need only implement the standard FileSystemDirectoryHandle
+// shape used here: an async-iterable `.values()` yielding entries with
+// `.kind` ("file"/"directory") and `.name`, and (for files) an async
+// `.getFile()` returning a File-like object with `.size` and an async
+// `.text()`. A real browser's FileSystemDirectoryHandle satisfies this
+// exactly; so does tests/fake-fs-access.js's in-memory tree.
+// ---------------------------------------------------------------------
+
+async function collectFilesFromDirectoryHandle(dirHandle, options = {}) {
+  const maxBytes = options.maxFileBytes != null ? options.maxFileBytes : 2 * 1024 * 1024;
+  const isBinaryByName = options.isBinaryByName || (() => false);
+
+  const files = [];
+  const skipped = [];
+
+  async function walk(handle, path) {
+    for await (const entry of handle.values()) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const entryPath = path ? `${path}/${entry.name}` : entry.name;
+      if (entry.kind === "directory") {
+        await walk(entry, entryPath);
+      } else if (entry.kind === "file") {
+        if (isBinaryByName(entryPath)) {
+          skipped.push(entryPath);
+          continue;
+        }
+        try {
+          const file = await entry.getFile();
+          if (file.size > maxBytes) {
+            skipped.push(entryPath);
+            continue;
+          }
+          const content = await file.text();
+          files.push({ path: entryPath, content });
+        } catch (e) {
+          skipped.push(entryPath);
+        }
+      }
+    }
+  }
+
+  await walk(dirHandle, "");
+  return { files, skipped };
+}
+
+// ---------------------------------------------------------------------
 // Ignore-list reconciliation - mirrors engine.py's hash_value()/
 // check_ignore(): a finding is identified by (file, key, rule), never by
 // its value directly. The stored "ignore" is a one-way SHA-256 hash of the
@@ -973,6 +1029,7 @@ if (typeof module !== "undefined") {
     hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
     computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist,
     findKeyValue, quoteWrap, classifyFile,
+    collectFilesFromDirectoryHandle,
     getBaseRuleSnapshot,
   };
 }

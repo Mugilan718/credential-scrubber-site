@@ -23,6 +23,19 @@
   const newAllowlistInput = document.getElementById("newAllowlistInput");
   const addAllowlistBtn = document.getElementById("addAllowlistBtn");
   const allowlistList = document.getElementById("allowlistList");
+  const fsAccessArea = document.getElementById("fsAccessArea");
+  const pickRememberedFolderBtn = document.getElementById("pickRememberedFolderBtn");
+  const rememberedFolderArea = document.getElementById("rememberedFolderArea");
+  const scanRememberedFolderBtn = document.getElementById("scanRememberedFolderBtn");
+  const rememberedFolderName = document.getElementById("rememberedFolderName");
+  const forgetFolderBtn = document.getElementById("forgetFolderBtn");
+
+  // File System Access API (Phase 5) - Chromium-based browsers only today
+  // (not Firefox/Safari). Feature-detected, never assumed - everything
+  // below is additive on top of the existing drag-and-drop/"Choose folder"
+  // flow, which behaves identically regardless of this support and needs
+  // no change or error path when it's absent.
+  const fsAccessSupported = typeof window.showDirectoryPicker === "function";
 
   let lastSanitizedFiles = [];
   let lastReportEntries = [];
@@ -65,10 +78,12 @@
   chooseBtn.addEventListener("click", () => folderInput.click());
   dropZone.addEventListener("click", (e) => {
     if (e.target === chooseBtn) return;
-    // Don't hijack a click on the placeholder-mode toggle (or its label
-    // text) into opening the folder picker - only the empty drop area and
-    // its instructional text should do that.
+    // Don't hijack a click on the placeholder-mode toggle, or any of the
+    // Phase 5 remembered-folder controls, into opening the folder picker -
+    // only the empty drop area and its instructional text should do that.
     if (e.target.closest(".placeholder-toggle")) return;
+    if (e.target.closest(".remembered-folder-area")) return;
+    if (e.target.closest(".fs-access-area")) return;
     folderInput.click();
   });
 
@@ -131,22 +146,35 @@
     scanningText.textContent = `Reading ${files.length} files…`;
 
     const readable = [];
-    let skippedCount = 0;
+    const rawFilesForZip = [];
 
     for (const file of files) {
       const relPath = file.relativePath || file.webkitRelativePath || file.name;
       if (isBinaryByName(relPath) || file.size > MAX_FILE_BYTES) {
-        skippedCount++;
+        // Carried through to the zip untouched, so the downloaded copy is
+        // a complete mirror of the original folder.
+        rawFilesForZip.push({ path: relPath, content: file, binary: true, rawFile: true });
         continue;
       }
       try {
         const content = await readFileAsText(file);
         readable.push({ path: relPath, content });
       } catch (e) {
-        skippedCount++;
+        // Unreadable - skip silently, same as an oversized/binary file.
       }
     }
 
+    await scanReadableFiles(readable, rawFilesForZip);
+  }
+
+  /**
+   * Shared downstream pipeline: takes already-read {path, content} files
+   * (from the classic file-input/drag-drop flow OR Phase 5's remembered-
+   * folder flow) through detection, ignore-reconciliation, rendering, and
+   * scan-history persistence. `rawFilesForZip` carries through any
+   * skipped binary/oversized files untouched, same as before.
+   */
+  async function scanReadableFiles(readable, rawFilesForZip) {
     scanningText.textContent = `Scanning ${readable.length} files…`;
     // Yield to the browser so the "scanning" state actually paints before the
     // (synchronous, potentially CPU-heavy) scan runs.
@@ -166,18 +194,9 @@
       scanResult = await applyIgnores(scanResult, ignoreMap);
     }
 
-    lastSanitizedFiles = scanResult.sanitizedFiles;
+    lastSanitizedFiles = scanResult.sanitizedFiles.concat(rawFilesForZip || []);
     lastReportEntries = scanResult.reportEntries;
     lastFilesScanned = readable.length;
-
-    // Also carry through skipped (binary/oversized) files into the zip, untouched,
-    // so the downloaded copy is a complete mirror of the original folder.
-    for (const file of files) {
-      const relPath = file.relativePath || file.webkitRelativePath || file.name;
-      if (isBinaryByName(relPath) || file.size > MAX_FILE_BYTES) {
-        lastSanitizedFiles.push({ path: relPath, content: file, binary: true, rawFile: true });
-      }
-    }
 
     renderResults(lastFilesScanned, lastReportEntries);
 
@@ -434,6 +453,116 @@
       const db = await getDb();
       if (db) await ScannerStorage.resetRuleOverrides(db);
       renderRuleEditor();
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // Remembered folder (Phase 5, File System Access API)
+  // -----------------------------------------------------------------------
+
+  let fsAccessError = null;
+
+  function renderFsAccessArea(remembered) {
+    if (!fsAccessArea || !rememberedFolderArea) return;
+    if (remembered) {
+      rememberedFolderArea.classList.remove("hidden");
+      rememberedFolderName.textContent = remembered.name;
+      fsAccessArea.classList.add("hidden");
+    } else {
+      rememberedFolderArea.classList.add("hidden");
+      fsAccessArea.classList.remove("hidden");
+    }
+    let note = fsAccessArea.querySelector(".fs-access-error");
+    if (fsAccessError) {
+      if (!note) {
+        note = document.createElement("p");
+        note.className = "fs-access-error";
+        fsAccessArea.appendChild(note);
+      }
+      note.textContent = fsAccessError;
+    } else if (note) {
+      note.remove();
+    }
+  }
+
+  async function loadRememberedFolder() {
+    if (!fsAccessSupported) {
+      if (fsAccessArea) fsAccessArea.classList.add("hidden");
+      if (rememberedFolderArea) rememberedFolderArea.classList.add("hidden");
+      return;
+    }
+    const db = await getDb();
+    const remembered = db ? await ScannerStorage.getFolderHandle(db) : null;
+    renderFsAccessArea(remembered);
+  }
+
+  loadRememberedFolder();
+
+  async function scanDirectoryHandle(handle) {
+    dropZone.classList.add("hidden");
+    scanningState.classList.remove("hidden");
+    resultsState.classList.add("hidden");
+    scanningText.textContent = "Reading remembered folder…";
+
+    const { files: readable } = await collectFilesFromDirectoryHandle(handle, {
+      maxFileBytes: MAX_FILE_BYTES,
+      isBinaryByName,
+    });
+    await scanReadableFiles(readable, []);
+  }
+
+  if (pickRememberedFolderBtn) {
+    pickRememberedFolderBtn.addEventListener("click", async () => {
+      fsAccessError = null;
+      try {
+        const handle = await window.showDirectoryPicker();
+        const db = await getDb();
+        if (db) await ScannerStorage.saveFolderHandle(db, handle, handle.name);
+        renderFsAccessArea({ name: handle.name });
+        await scanDirectoryHandle(handle);
+      } catch (e) {
+        // AbortError = the user closed the picker without choosing anything
+        // - not an error worth showing.
+        if (e && e.name !== "AbortError") {
+          fsAccessError = "Couldn't access that folder. You can still use drag-and-drop or \"Choose folder\" above.";
+          renderFsAccessArea(null);
+        }
+      }
+    });
+  }
+
+  if (scanRememberedFolderBtn) {
+    scanRememberedFolderBtn.addEventListener("click", async () => {
+      const db = await getDb();
+      const remembered = db ? await ScannerStorage.getFolderHandle(db) : null;
+      if (!remembered) return;
+      fsAccessError = null;
+      try {
+        // Permission is not guaranteed to persist across sessions - this
+        // must be requested from within a user gesture (this click), which
+        // is exactly where it's called from here.
+        let permission = await remembered.handle.queryPermission({ mode: "read" });
+        if (permission !== "granted") {
+          permission = await remembered.handle.requestPermission({ mode: "read" });
+        }
+        if (permission !== "granted") {
+          fsAccessError = "Access to this folder was not granted. Pick it again, or use drag-and-drop/\"Choose folder\" instead.";
+          renderFsAccessArea(null);
+          return;
+        }
+        await scanDirectoryHandle(remembered.handle);
+      } catch (e) {
+        fsAccessError = "Couldn't access the remembered folder (it may have been moved or deleted). Try remembering it again.";
+        renderFsAccessArea(null);
+      }
+    });
+  }
+
+  if (forgetFolderBtn) {
+    forgetFolderBtn.addEventListener("click", async () => {
+      const db = await getDb();
+      if (db) await ScannerStorage.clearFolderHandle(db);
+      renderFsAccessArea(null);
     });
   }
 

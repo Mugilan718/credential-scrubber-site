@@ -40,6 +40,16 @@
       Use typed placeholders (like <code>&lt;PASSWORD_1&gt;</code>) instead of one shared mask
     </label>
     <p class="placeholder-toggle-note">Keeps track of whether two values are the same secret or two different ones — useful if you're about to hand the result to an AI. Leave unchecked for the default: every finding replaced with the same <code>***REDACTED***</code>.</p>
+
+    <div id="rememberedFolderArea" class="remembered-folder-area hidden">
+      <button class="btn-glow" id="scanRememberedFolderBtn">Scan remembered folder: <span id="rememberedFolderName"></span></button>
+      <button class="btn-ghost btn-small" id="forgetFolderBtn">Forget this folder</button>
+    </div>
+
+    <div id="fsAccessArea" class="fs-access-area hidden">
+      <button class="btn-ghost btn-small" id="pickRememberedFolderBtn">Remember a folder for next time</button>
+      <p class="fs-access-note">Available in Chrome/Edge. Grants this site access to a folder you choose so you don't have to re-select it on your next visit — revoke it anytime in your browser's site settings. Not available in this browser? The drag-and-drop/"Choose folder" option above always works the same either way.</p>
+    </div>
   </div>
 
   <div id="scanningState" class="scanning-state hidden">

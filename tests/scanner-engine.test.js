@@ -19,7 +19,9 @@ const {
   hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
   computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist, getBaseRuleSnapshot,
   findKeyValue, quoteWrap, classifyFile,
+  collectFilesFromDirectoryHandle,
 } = require(path.join(__dirname, "..", "scanner-engine.js"));
+const { buildFakeDirectory } = require(path.join(__dirname, "fake-fs-access.js"));
 
 let passed = 0;
 let failed = 0;
@@ -984,6 +986,83 @@ await test("own fixture: YAML block-scalar header is left alone even when the ke
   const out = redactConfigLine(line, 1, "f.yaml", entries);
   assert.strictEqual(out, line);
   assert.strictEqual(entries.length, 0);
+});
+
+// -----------------------------------------------------------------------
+// PHASE 5 - directory walking for the File System Access API
+// -----------------------------------------------------------------------
+// collectFilesFromDirectoryHandle() is pure logic exercised here against
+// tests/fake-fs-access.js's in-memory tree. It does NOT and CANNOT test
+// the real browser APIs (showDirectoryPicker(), permission prompts) -
+// those only exist in a real browser; see the final project summary for
+// this distinction spelled out explicitly.
+
+console.log("\ncollectFilesFromDirectoryHandle() - pure directory-walk logic:");
+
+await test("flat directory: every file collected with its content", async () => {
+  const dir = buildFakeDirectory({
+    "config.json": '{"password": "fakeDirScan123"}',
+    "readme.md": "hello",
+  });
+  const { files, skipped } = await collectFilesFromDirectoryHandle(dir);
+  assert.strictEqual(files.length, 2);
+  assert.strictEqual(skipped.length, 0);
+  const configFile = files.find((f) => f.path === "config.json");
+  assert.ok(configFile);
+  assert.ok(configFile.content.includes("fakeDirScan123"));
+});
+
+await test("nested directories: paths built with '/' separators", async () => {
+  const dir = buildFakeDirectory({
+    src: { nested: { "deep.py": "password = 'fakeDeep123'" } },
+    "top.env": "TOKEN=fakeTop456",
+  });
+  const { files } = await collectFilesFromDirectoryHandle(dir);
+  const paths = files.map((f) => f.path).sort();
+  assert.deepStrictEqual(paths, ["src/nested/deep.py", "top.env"]);
+});
+
+await test("SKIP_DIRS (e.g. node_modules, .git) are never descended into", async () => {
+  const dir = buildFakeDirectory({
+    "node_modules": { "somepkg.js": "should never appear" },
+    ".git": { "config": "should never appear either" },
+    "app.js": "const password = 'fakeSkipDirsTest';",
+  });
+  const { files } = await collectFilesFromDirectoryHandle(dir);
+  assert.strictEqual(files.length, 1);
+  assert.strictEqual(files[0].path, "app.js");
+});
+
+await test("binary-by-name files are skipped, not read", async () => {
+  const dir = buildFakeDirectory({ "logo.png": "not real image bytes but shouldn't matter", "app.py": "x = 1" });
+  const { files, skipped } = await collectFilesFromDirectoryHandle(dir, {
+    isBinaryByName: (name) => name.toLowerCase().endsWith(".png"),
+  });
+  assert.strictEqual(files.length, 1);
+  assert.deepStrictEqual(skipped, ["logo.png"]);
+});
+
+await test("oversized files are skipped, not read", async () => {
+  const bigContent = "x".repeat(100);
+  const dir = buildFakeDirectory({ "big.txt": bigContent, "small.txt": "ok" });
+  const { files, skipped } = await collectFilesFromDirectoryHandle(dir, { maxFileBytes: 50 });
+  assert.strictEqual(files.length, 1);
+  assert.strictEqual(files[0].path, "small.txt");
+  assert.deepStrictEqual(skipped, ["big.txt"]);
+});
+
+await test("end-to-end: files collected from a directory handle feed straight into scanFiles()", async () => {
+  const dir = buildFakeDirectory({
+    "app.properties": "password=fakeDirEndToEnd123",
+    "config.json": '{\n  "api_key": "fakeDirJsonKey456"\n}',
+  });
+  const { files } = await collectFilesFromDirectoryHandle(dir);
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 2);
+  for (const f of sanitizedFiles) {
+    assert.ok(!f.content.includes("fakeDirEndToEnd123"));
+    assert.ok(!f.content.includes("fakeDirJsonKey456"));
+  }
 });
 
 // -----------------------------------------------------------------------

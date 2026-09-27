@@ -22,6 +22,12 @@
  *     computeEffectiveKeyPatterns()/computeEffectivePlaceholderAllowlist()
  *     for how these are layered on top of window.RULES/rules-data.js
  *     without ever modifying it.
+ *   - "folderHandle" (Phase 5): a single record holding a remembered
+ *     FileSystemDirectoryHandle (structured-cloneable, so IndexedDB can
+ *     store the handle itself, not just its name) - lets a user re-scan a
+ *     folder on a later visit without re-selecting it. Chromium-only (the
+ *     File System Access API); see scanner-ui.js for the feature-detection
+ *     and graceful-degradation handling on browsers without it.
  *
  * This file contains no detection/redaction logic of its own - it is a
  * thin CRUD wrapper around IndexedDB. The logic that decides whether an
@@ -32,17 +38,19 @@
  * browser (or the fake IndexedDB test double used by tests/storage.test.js).
  *
  * DB_VERSION history: 1 (Phase 3 - scanHistory, ignores), 2 (Phase 4 -
- * adds ruleOverrides). Bumping this version is what makes an existing
- * user's browser add the new store on next load via onupgradeneeded,
- * WITHOUT touching their existing scanHistory/ignores data.
+ * adds ruleOverrides), 3 (Phase 5 - adds folderHandle). Bumping this
+ * version is what makes an existing user's browser add the new store on
+ * next load via onupgradeneeded, WITHOUT touching their existing data.
  */
 
 const DB_NAME = "credential-scrubber-scanner";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const SCAN_HISTORY_STORE = "scanHistory";
 const IGNORES_STORE = "ignores";
 const RULE_OVERRIDES_STORE = "ruleOverrides";
 const RULE_OVERRIDES_ID = "default"; // single record - this is per-browser session config, not a list
+const FOLDER_HANDLE_STORE = "folderHandle";
+const FOLDER_HANDLE_ID = "default"; // single record - one remembered folder at a time
 
 function promisifyRequest(request) {
   return new Promise((resolve, reject) => {
@@ -64,6 +72,9 @@ function openScannerDB() {
       }
       if (!db.objectStoreNames.contains(RULE_OVERRIDES_STORE)) {
         db.createObjectStore(RULE_OVERRIDES_STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(FOLDER_HANDLE_STORE)) {
+        db.createObjectStore(FOLDER_HANDLE_STORE, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -168,11 +179,38 @@ async function resetRuleOverrides(db) {
   await promisifyRequest(tx.objectStore(RULE_OVERRIDES_STORE).delete(RULE_OVERRIDES_ID));
 }
 
+/**
+ * Remembers a FileSystemDirectoryHandle (Phase 5) - the handle object
+ * itself, not just its name, so a later visit can re-request permission
+ * and re-read the same folder without the user picking it again. `name`
+ * is stored alongside purely for display ("Scan remembered folder: X")
+ * without needing to touch the handle just to show its name.
+ */
+async function saveFolderHandle(db, handle, name) {
+  const tx = db.transaction(FOLDER_HANDLE_STORE, "readwrite");
+  const record = { id: FOLDER_HANDLE_ID, handle, name, savedAt: Date.now() };
+  await promisifyRequest(tx.objectStore(FOLDER_HANDLE_STORE).put(record));
+  return record;
+}
+
+/** Returns the remembered { handle, name } record, or null if none saved. */
+async function getFolderHandle(db) {
+  const tx = db.transaction(FOLDER_HANDLE_STORE, "readonly");
+  const record = await promisifyRequest(tx.objectStore(FOLDER_HANDLE_STORE).get(FOLDER_HANDLE_ID));
+  return record || null;
+}
+
+async function clearFolderHandle(db) {
+  const tx = db.transaction(FOLDER_HANDLE_STORE, "readwrite");
+  await promisifyRequest(tx.objectStore(FOLDER_HANDLE_STORE).delete(FOLDER_HANDLE_ID));
+}
+
 const ScannerStorage = {
   openScannerDB, ignoreKeyFor,
   saveScanHistoryEntry, listScanHistory, clearScanHistory,
   setIgnore, removeIgnore, getIgnoreMap,
   getRuleOverrides, saveRuleOverrides, resetRuleOverrides,
+  saveFolderHandle, getFolderHandle, clearFolderHandle,
 };
 
 if (typeof window !== "undefined") {
