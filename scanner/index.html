@@ -55,8 +55,20 @@
       <button class="btn-ghost" id="startOverBtn">Scan another folder</button>
     </div>
 
+    <p class="ignore-note">Ignoring a finding is remembered on this device only — see "Scan history" below for details.</p>
     <div id="resultsTable" class="results-table"></div>
   </div>
+
+  <section id="scanHistoryPanel" class="scan-history-panel">
+    <div class="scan-history-header">
+      <h2>Scan history</h2>
+      <button class="btn-ghost btn-small" id="clearHistoryBtn">Clear history</button>
+    </div>
+    <p class="local-only-note">Stored locally in this one browser, on this one device, only. It never syncs anywhere and is lost if you clear this site's browser data. The same applies to any finding you ignore: only a one-way hash of the value is kept — never the value itself — so a changed value always reappears, flagged, rather than staying silently hidden.</p>
+    <div id="scanHistoryList" class="scan-history-list">
+      <p class="scan-history-empty">No scans yet.</p>
+    </div>
+  </section>
 
 </main>
 
@@ -67,6 +79,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="../rules-data.js"></script>
 <script src="../scanner-engine.js"></script>
+<script src="storage.js"></script>
 <script src="scanner-ui.js"></script>
 </body>
 </html>

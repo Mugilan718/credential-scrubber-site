@@ -16,14 +16,20 @@ const {
   redactConfigLine, redactCodeLine, redactValuePatternsOnly,
   PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
   categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
+  hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
 } = require(path.join(__dirname, "..", "scanner-engine.js"));
 
 let passed = 0;
 let failed = 0;
 
-function test(name, fn) {
+// async so a test body can `await` (hashValue()/applyIgnores() are
+// Promise-based - see scanner-engine.js's module comment for why). Every
+// call site below is `await test(...)`, and the whole script body runs
+// inside an async main() (see the bottom of this file) so tests execute
+// strictly in order with correct pass/fail accounting either way.
+async function test(name, fn) {
   try {
-    fn();
+    await fn();
     passed++;
     console.log(`  ok  - ${name}`);
   } catch (e) {
@@ -33,13 +39,14 @@ function test(name, fn) {
   }
 }
 
+async function main() {
 // -----------------------------------------------------------------------
 // PHASE 1 - multi-line concatenated secret detection
 // -----------------------------------------------------------------------
 
 console.log("Python parenthesized concatenation:");
 
-test("basic two-fragment concatenation is masked, both fragments gone", () => {
+await test("basic two-fragment concatenation is masked, both fragments gone", () => {
   const lines = [
     "API_SECRET = (",
     '    "fake"',
@@ -55,7 +62,7 @@ test("basic two-fragment concatenation is masked, both fragments gone", () => {
   assert.strictEqual(entries[0].rule, "multiline_concat_key_name_match");
 });
 
-test("three-fragment concatenation - every fragment masked, line count unchanged", () => {
+await test("three-fragment concatenation - every fragment masked, line count unchanged", () => {
   const lines = [
     "db_password = (",
     '    "part1"',
@@ -70,7 +77,7 @@ test("three-fragment concatenation - every fragment masked, line count unchanged
   for (const l of ["part1", "part2", "part3"]) assert.ok(!lines.join("\n").includes(l));
 });
 
-test("no closing paren - left untouched (malformed, not guessed at)", () => {
+await test("no closing paren - left untouched (malformed, not guessed at)", () => {
   const lines = [
     "API_SECRET = (",
     '    "fake"',
@@ -84,7 +91,7 @@ test("no closing paren - left untouched (malformed, not guessed at)", () => {
   assert.ok(lines.join("\n").includes("fake") && lines.join("\n").includes("secret"));
 });
 
-test("harmless variable name + non-sensitive value - not flagged", () => {
+await test("harmless variable name + non-sensitive value - not flagged", () => {
   const lines = [
     "message = (",
     '    "hello "',
@@ -99,7 +106,7 @@ test("harmless variable name + non-sensitive value - not flagged", () => {
 
 console.log("\nJava/JS/C# '+' concatenation (trailing-+ style):");
 
-test("Java trailing-+ style masks every fragment", () => {
+await test("Java trailing-+ style masks every fragment", () => {
   const lines = [
     'String authToken = "fake1234" +',
     '    "5678secret";',
@@ -112,7 +119,7 @@ test("Java trailing-+ style masks every fragment", () => {
   assert.strictEqual(entries.length, 2);
 });
 
-test("JavaScript trailing-+ style (const declaration) is masked", () => {
+await test("JavaScript trailing-+ style (const declaration) is masked", () => {
   const lines = [
     'const apiKey = "fakeJS1234" +',
     '    "moreSecretJS";',
@@ -125,7 +132,7 @@ test("JavaScript trailing-+ style (const declaration) is masked", () => {
   assert.strictEqual(entries.length, 2);
 });
 
-test("C# trailing-+ style (string declaration) is masked", () => {
+await test("C# trailing-+ style (string declaration) is masked", () => {
   const lines = [
     'string clientSecret = "fakeCS1234" +',
     '    "moreSecretCS";',
@@ -138,7 +145,7 @@ test("C# trailing-+ style (string declaration) is masked", () => {
   assert.strictEqual(entries.length, 2);
 });
 
-test("three-fragment trailing-+ chain - all three fragments masked", () => {
+await test("three-fragment trailing-+ chain - all three fragments masked", () => {
   const lines = [
     'String authToken = "fake-plusfrag-one" +',
     '        "fake-plusfrag-two" +',
@@ -155,7 +162,7 @@ test("three-fragment trailing-+ chain - all three fragments masked", () => {
 
 console.log("\nLeading-+ style:");
 
-test("Java leading-+ style masks every fragment", () => {
+await test("Java leading-+ style masks every fragment", () => {
   const lines = [
     'String authToken = "fakeLead1234"',
     '    + "moreSecretLead";',
@@ -168,7 +175,7 @@ test("Java leading-+ style masks every fragment", () => {
   assert.strictEqual(entries.length, 2);
 });
 
-test("leading-+ chain with three fragments, terminated by ';' on the last", () => {
+await test("leading-+ chain with three fragments, terminated by ';' on the last", () => {
   const lines = [
     'String secretValue = "fakeA"',
     '    + "fakeB"',
@@ -181,7 +188,7 @@ test("leading-+ chain with three fragments, terminated by ';' on the last", () =
 
 console.log("\nUnterminated / malformed chains - left untouched:");
 
-test("trailing-+ chain with no terminating ';' is left untouched entirely", () => {
+await test("trailing-+ chain with no terminating ';' is left untouched entirely", () => {
   const lines = [
     'String authToken = "fake1234" +',
     '    "5678secret"', // no trailing + and no ';' - malformed
@@ -193,7 +200,7 @@ test("trailing-+ chain with no terminating ';' is left untouched entirely", () =
   assert.ok(lines.join("\n").includes("fake1234"));
 });
 
-test("single fragment only (no real concatenation) is not treated as multiline", () => {
+await test("single fragment only (no real concatenation) is not treated as multiline", () => {
   const lines = [
     'String authToken = "fake1234";', // already terminated on line 1, no continuation
     "int x = 5;",
@@ -205,7 +212,7 @@ test("single fragment only (no real concatenation) is not treated as multiline",
 
 console.log("\nGo parity (intentionally NOT covered, matching engine.py):");
 
-test("Go '+' concatenation is not detected (matches desktop's known limitation)", () => {
+await test("Go '+' concatenation is not detected (matches desktop's known limitation)", () => {
   const lines = [
     'authToken := "fakeGo1234" +',
     '    "moreSecretGo"',
@@ -221,7 +228,7 @@ test("Go '+' concatenation is not detected (matches desktop's known limitation)"
 
 console.log("\nFull pipeline (scanFiles) - multiline integrates correctly with single-line pass:");
 
-test("scanFiles(): Python file with both a multiline secret and a single-line secret - both caught, no double-processing", () => {
+await test("scanFiles(): Python file with both a multiline secret and a single-line secret - both caught, no double-processing", () => {
   const files = [{
     path: "config.py",
     content: [
@@ -245,7 +252,7 @@ test("scanFiles(): Python file with both a multiline secret and a single-line se
   assert.strictEqual(maskCount, 3);
 });
 
-test("scanFiles(): Java file with a multiline secret - sanitized output never contains the real value", () => {
+await test("scanFiles(): Java file with a multiline secret - sanitized output never contains the real value", () => {
   const files = [{
     path: "Config.java",
     content: [
@@ -268,7 +275,7 @@ test("scanFiles(): Java file with a multiline secret - sanitized output never co
 
 console.log("\nRegression - existing single-line behavior unchanged:");
 
-test("config key-name match still redacts (password=)", () => {
+await test("config key-name match still redacts (password=)", () => {
   const entries = [];
   const out = redactConfigLine("password=fakeSup3rSecret!", 1, "f.env", entries);
   assert.ok(out.includes(MASK));
@@ -276,28 +283,28 @@ test("config key-name match still redacts (password=)", () => {
   assert.strictEqual(entries[0].rule, "key_name_match");
 });
 
-test("config: ordinary non-secret value untouched", () => {
+await test("config: ordinary non-secret value untouched", () => {
   const entries = [];
   const out = redactConfigLine("region=us-east-1", 1, "f.env", entries);
   assert.strictEqual(out, "region=us-east-1");
   assert.strictEqual(entries.length, 0);
 });
 
-test("config: placeholder allow-list still suppresses a value-only match", () => {
+await test("config: placeholder allow-list still suppresses a value-only match", () => {
   const entries = [];
   const out = redactConfigLine("some_value=localhost", 1, "f.env", entries);
   assert.strictEqual(entries.length, 0);
   assert.strictEqual(out, "some_value=localhost");
 });
 
-test("value-pattern: AWS access key id still detected in free text", () => {
+await test("value-pattern: AWS access key id still detected in free text", () => {
   const entries = [];
   const out = redactValuePatternsOnly("key = AKIAABCDEFGHIJKLMNOP", 1, "f.txt", entries);
   assert.ok(out.includes(MASK));
   assert.strictEqual(entries[0].rule, "aws_access_key_id");
 });
 
-test("value-pattern: JWT still detected", () => {
+await test("value-pattern: JWT still detected", () => {
   const entries = [];
   const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dQw4w9WgXcQ";
   const out = redactValuePatternsOnly(`token: ${jwt}`, 1, "f.txt", entries);
@@ -305,23 +312,23 @@ test("value-pattern: JWT still detected", () => {
   assert.strictEqual(entries[0].rule, "jwt_token");
 });
 
-test("code: single-line Java secret literal still detected (unrelated to multiline change)", () => {
+await test("code: single-line Java secret literal still detected (unrelated to multiline change)", () => {
   const entries = [];
   const out = redactCodeLine('String password = "fakeSingleLine123";', "java", 1, "f.java", entries);
   assert.ok(!out.includes("fakeSingleLine123"));
   assert.strictEqual(entries.length, 1);
 });
 
-test("findKeyMatches(): camelCase-aware - 'authToken' matches, 'author' does not", () => {
+await test("findKeyMatches(): camelCase-aware - 'authToken' matches, 'author' does not", () => {
   assert.strictEqual(findKeyMatches("authToken"), true);
   assert.strictEqual(findKeyMatches("author"), false);
 });
 
-test("findKeyMatches(): 'dbPassword' matches via camelCase transition", () => {
+await test("findKeyMatches(): 'dbPassword' matches via camelCase transition", () => {
   assert.strictEqual(findKeyMatches("dbPassword"), true);
 });
 
-test("findKeyMatches(): a harmless variable name does not match", () => {
+await test("findKeyMatches(): a harmless variable name does not match", () => {
   assert.strictEqual(findKeyMatches("message"), false);
 });
 
@@ -331,41 +338,41 @@ test("findKeyMatches(): a harmless variable name does not match", () => {
 
 console.log("\nData-driven rules sync (rules-data.js):");
 
-test("config: 'username' is no longer a key pattern (matches current rules_default.yaml)", () => {
+await test("config: 'username' is no longer a key pattern (matches current rules_default.yaml)", () => {
   const entries = [];
   const out = redactConfigLine("username=admin", 1, "f.env", entries);
   assert.strictEqual(entries.length, 0, "username should not be flagged - it was removed from rules_default.yaml");
   assert.strictEqual(out, "username=admin");
 });
 
-test("config: 'port' is no longer a key pattern (matches current rules_default.yaml)", () => {
+await test("config: 'port' is no longer a key pattern (matches current rules_default.yaml)", () => {
   const entries = [];
   const out = redactConfigLine("port=5432", 1, "f.env", entries);
   assert.strictEqual(entries.length, 0, "port should not be flagged - it was removed from rules_default.yaml");
   assert.strictEqual(out, "port=5432");
 });
 
-test("config: 'db_port' still fine (not a real secret either, and 'port' isn't a pattern anymore anyway)", () => {
+await test("config: 'db_port' still fine (not a real secret either, and 'port' isn't a pattern anymore anyway)", () => {
   const entries = [];
   redactConfigLine("db_port=5432", 1, "f.env", entries);
   assert.strictEqual(entries.length, 0);
 });
 
-test("bonus fix from switching to strict uniform boundary checking: 'secretary_name' no longer falsely matches bare 'secret'", () => {
+await test("bonus fix from switching to strict uniform boundary checking: 'secretary_name' no longer falsely matches bare 'secret'", () => {
   const entries = [];
   const out = redactConfigLine("secretary_name = John Smith", 1, "f.env", entries);
   assert.strictEqual(entries.length, 0, "'secret' must not match as a substring of 'secretary'");
   assert.strictEqual(out, "secretary_name = John Smith");
 });
 
-test("uniform boundary checking still correctly matches genuine keys sharing a word boundary with 'secret'", () => {
+await test("uniform boundary checking still correctly matches genuine keys sharing a word boundary with 'secret'", () => {
   const entries = [];
   const out = redactConfigLine("client_secret=fakeSecretValue123", 1, "f.env", entries);
   assert.ok(out.includes(MASK));
   assert.strictEqual(entries.length, 1);
 });
 
-test("bonus coverage gained from data-driven code_patterns: Python os.getenv(...) fallback default is now detected", () => {
+await test("bonus coverage gained from data-driven code_patterns: Python os.getenv(...) fallback default is now detected", () => {
   const entries = [];
   const out = redactCodeLine('DB_PASSWORD = os.getenv("DB_PASSWORD", "fake-PlainOldPassword1")', "python", 1, "f.py", entries);
   assert.ok(!out.includes("fake-PlainOldPassword1"), "the hardcoded fallback default should be masked");
@@ -378,21 +385,21 @@ test("bonus coverage gained from data-driven code_patterns: Python os.getenv(...
 
 console.log("\nPlaceholderRegistry - determinism and distinctness (mirrors test_placeholders.py):");
 
-test("same value + same category gives the same placeholder", () => {
+await test("same value + same category gives the same placeholder", () => {
   const reg = new PlaceholderRegistry();
   const a = reg.getOrCreate("PASSWORD", "fakeSecret123");
   const b = reg.getOrCreate("PASSWORD", "fakeSecret123");
   assert.strictEqual(a, b);
 });
 
-test("different values in the same category give different placeholders", () => {
+await test("different values in the same category give different placeholders", () => {
   const reg = new PlaceholderRegistry();
   const a = reg.getOrCreate("API_KEY", "keyOne");
   const b = reg.getOrCreate("API_KEY", "keyTwo");
   assert.notStrictEqual(a, b);
 });
 
-test("repeated value (3+ times) all correlate to the same token", () => {
+await test("repeated value (3+ times) all correlate to the same token", () => {
   const reg = new PlaceholderRegistry();
   const first = reg.getOrCreate("GENERIC_SECRET", "PF001");
   const second = reg.getOrCreate("GENERIC_SECRET", "PF001");
@@ -401,14 +408,14 @@ test("repeated value (3+ times) all correlate to the same token", () => {
   assert.strictEqual(second, third);
 });
 
-test("same value under a different category gives a different placeholder (categories never share a counter)", () => {
+await test("same value under a different category gives a different placeholder (categories never share a counter)", () => {
   const reg = new PlaceholderRegistry();
   const a = reg.getOrCreate("PASSWORD", "sameRawValue");
   const b = reg.getOrCreate("API_KEY", "sameRawValue");
   assert.notStrictEqual(a, b);
 });
 
-test("multiple categories get independent per-category counters", () => {
+await test("multiple categories get independent per-category counters", () => {
   const reg = new PlaceholderRegistry();
   assert.strictEqual(reg.getOrCreate("PASSWORD", "p1"), "<PASSWORD_1>");
   assert.strictEqual(reg.getOrCreate("API_KEY", "k1"), "<API_KEY_1>");
@@ -416,7 +423,7 @@ test("multiple categories get independent per-category counters", () => {
   assert.strictEqual(reg.getOrCreate("API_KEY", "k2"), "<API_KEY_2>");
 });
 
-test("placeholder text is built only from category + counter - never contains any part of the real value", () => {
+await test("placeholder text is built only from category + counter - never contains any part of the real value", () => {
   const reg = new PlaceholderRegistry();
   const secretValue = "SuperSecretDatabasePassword9000";
   const token = reg.getOrCreate("PASSWORD", secretValue);
@@ -428,7 +435,7 @@ test("placeholder text is built only from category + counter - never contains an
 
 console.log("\nPlaceholder mode wired into detection functions:");
 
-test("config: key-name match produces a typed placeholder instead of MASK when a registry is given", () => {
+await test("config: key-name match produces a typed placeholder instead of MASK when a registry is given", () => {
   const reg = new PlaceholderRegistry();
   const entries = [];
   const out = redactConfigLine("password=fakeSup3rSecret!", 1, "f.env", entries, reg);
@@ -437,7 +444,7 @@ test("config: key-name match produces a typed placeholder instead of MASK when a
   assert.strictEqual(entries[0].after, "<PASSWORD_1>");
 });
 
-test("config: same real value redacted under two different keys still correlates to one placeholder", () => {
+await test("config: same real value redacted under two different keys still correlates to one placeholder", () => {
   const reg = new PlaceholderRegistry();
   const e1 = [];
   const e2 = [];
@@ -446,7 +453,7 @@ test("config: same real value redacted under two different keys still correlates
   assert.strictEqual(e1[0].after, e2[0].after);
 });
 
-test("config: quoted vs. unquoted occurrences of the same value still correlate (identity normalization)", () => {
+await test("config: quoted vs. unquoted occurrences of the same value still correlate (identity normalization)", () => {
   const reg = new PlaceholderRegistry();
   const e1 = [];
   const e2 = [];
@@ -455,14 +462,14 @@ test("config: quoted vs. unquoted occurrences of the same value still correlate 
   assert.strictEqual(e1[0].after, e2[0].after);
 });
 
-test("config: value-pattern match (no key hit) still gets a category-appropriate placeholder", () => {
+await test("config: value-pattern match (no key hit) still gets a category-appropriate placeholder", () => {
   const reg = new PlaceholderRegistry();
   const entries = [];
   redactConfigLine("some_value=AKIAABCDEFGHIJKLMNOP", 1, "f.env", entries, reg);
   assert.match(entries[0].after, /^<API_KEY_\d+>$/);
 });
 
-test("code: single-line literal gets a typed placeholder, category resolved from the variable name", () => {
+await test("code: single-line literal gets a typed placeholder, category resolved from the variable name", () => {
   const reg = new PlaceholderRegistry();
   const entries = [];
   const out = redactCodeLine('String apiKey = "fakeApiKeyValue123";', "java", 1, "f.java", entries, reg);
@@ -470,7 +477,7 @@ test("code: single-line literal gets a typed placeholder, category resolved from
   assert.match(entries[0].after, /^<API_KEY_\d+>$/);
 });
 
-test("multiline (Python paren-style): whole value gets ONE placeholder on the first fragment, rest emptied", () => {
+await test("multiline (Python paren-style): whole value gets ONE placeholder on the first fragment, rest emptied", () => {
   const reg = new PlaceholderRegistry();
   const lines = [
     "API_SECRET = (",
@@ -488,7 +495,7 @@ test("multiline (Python paren-style): whole value gets ONE placeholder on the fi
   assert.ok(!joined.includes("fake-frag-two"));
 });
 
-test("multiline (Java plus-style, 3 fragments): one placeholder on the first fragment, both later ones emptied", () => {
+await test("multiline (Java plus-style, 3 fragments): one placeholder on the first fragment, both later ones emptied", () => {
   const reg = new PlaceholderRegistry();
   const lines = [
     'String authToken = "fake-plusfrag-one" +',
@@ -508,7 +515,7 @@ test("multiline (Java plus-style, 3 fragments): one placeholder on the first fra
   assert.strictEqual((joined.match(/\+/g) || []).length, 2);
 });
 
-test("multiline value correlates with a single-line occurrence of the same reconstructed value elsewhere", () => {
+await test("multiline value correlates with a single-line occurrence of the same reconstructed value elsewhere", () => {
   const reg = new PlaceholderRegistry();
   const multilineLines = [
     'String authToken = "fakeAB" +',
@@ -525,13 +532,13 @@ test("multiline value correlates with a single-line occurrence of the same recon
 
 console.log("\nFull pipeline (scanFiles) with placeholderMode option:");
 
-test("scanFiles({placeholderMode:false}) (default) - unchanged MASK behavior", () => {
+await test("scanFiles({placeholderMode:false}) (default) - unchanged MASK behavior", () => {
   const files = [{ path: "app.properties", content: "password=fakeDefault123" }];
   const { sanitizedFiles } = scanFiles(files);
   assert.ok(sanitizedFiles[0].content.includes(MASK));
 });
 
-test("scanFiles({placeholderMode:true}) - typed placeholders throughout, no MASK anywhere", () => {
+await test("scanFiles({placeholderMode:true}) - typed placeholders throughout, no MASK anywhere", () => {
   const files = [{
     path: "app.properties",
     content: [
@@ -547,7 +554,7 @@ test("scanFiles({placeholderMode:true}) - typed placeholders throughout, no MASK
   assert.strictEqual(reportEntries.length, 2);
 });
 
-test("scanFiles({placeholderMode:true}) - determinism: repeated scans of the same input produce identical output", () => {
+await test("scanFiles({placeholderMode:true}) - determinism: repeated scans of the same input produce identical output", () => {
   const files = [{
     path: "app.properties",
     content: ["api_key=fakeDetKey1", "another_key=fakeDetKey2", "third=fakeDetKey1"].join("\n"),
@@ -557,7 +564,7 @@ test("scanFiles({placeholderMode:true}) - determinism: repeated scans of the sam
   assert.strictEqual(run1.sanitizedFiles[0].content, run2.sanitizedFiles[0].content);
 });
 
-test("scanFiles({placeholderMode:true}) - distinctness across an entire multi-file scan: two different secrets never share a token", () => {
+await test("scanFiles({placeholderMode:true}) - distinctness across an entire multi-file scan: two different secrets never share a token", () => {
   const files = [
     { path: "a.properties", content: "password=fakeUniqueValueOne" },
     { path: "b.properties", content: "password=fakeUniqueValueTwo" },
@@ -567,7 +574,7 @@ test("scanFiles({placeholderMode:true}) - distinctness across an entire multi-fi
   assert.notStrictEqual(reportEntries[0].after, reportEntries[1].after);
 });
 
-test("scanFiles({placeholderMode:true}) - the same secret repeated across two different files still correlates", () => {
+await test("scanFiles({placeholderMode:true}) - the same secret repeated across two different files still correlates", () => {
   const files = [
     { path: "a.properties", content: "password=fakeSharedAcrossFiles" },
     { path: "b.properties", content: "backup_password=fakeSharedAcrossFiles" },
@@ -576,7 +583,7 @@ test("scanFiles({placeholderMode:true}) - the same secret repeated across two di
   assert.strictEqual(reportEntries[0].after, reportEntries[1].after);
 });
 
-test("scanFiles({placeholderMode:true}) - no original secret value remains anywhere in the sanitized output", () => {
+await test("scanFiles({placeholderMode:true}) - no original secret value remains anywhere in the sanitized output", () => {
   const files = [{
     path: "secrets.py",
     content: [
@@ -594,7 +601,7 @@ test("scanFiles({placeholderMode:true}) - no original secret value remains anywh
   }
 });
 
-test("category helpers resolve as expected (spot checks against engine.py's mapping tables)", () => {
+await test("category helpers resolve as expected (spot checks against engine.py's mapping tables)", () => {
   assert.strictEqual(categoryForKeyPattern("password"), "PASSWORD");
   assert.strictEqual(categoryForKeyPattern("api[_-]?key"), "API_KEY");
   assert.strictEqual(categoryForKeyPattern("some_unmapped_future_pattern"), "GENERIC_SECRET");
@@ -608,6 +615,124 @@ test("category helpers resolve as expected (spot checks against engine.py's mapp
 });
 
 // -----------------------------------------------------------------------
+// PHASE 3 - ignore-list hash verification (applyIgnores/hashValue)
+// -----------------------------------------------------------------------
+
+console.log("\nhashValue() - standard SHA-256 (Web Crypto), known test vectors:");
+
+await test("SHA-256 of the empty string matches the well-known vector", async () => {
+  assert.strictEqual(await hashValue(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+});
+
+await test("SHA-256 of 'abc' matches the well-known vector", async () => {
+  assert.strictEqual(await hashValue("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+});
+
+await test("hashValue is deterministic and distinguishes different inputs", async () => {
+  const h1 = await hashValue("fakeSecretABC");
+  const h2 = await hashValue("fakeSecretABC");
+  const h3 = await hashValue("fakeSecretXYZ");
+  assert.strictEqual(h1, h2);
+  assert.notStrictEqual(h1, h3);
+});
+
+console.log("\napplyIgnores() - suppression, change-detection, and restoration:");
+
+await test("no matching ignore entry - report entry and output untouched", async () => {
+  const scanResult = { sanitizedFiles: [{ path: "f.env", content: `password=${MASK}` }], reportEntries: [{ file: "f.env", line: 1, key: "password", rule: "key_name_match", before: "fakeVal", after: MASK }] };
+  const result = await applyIgnores(scanResult, {});
+  assert.strictEqual(result.reportEntries.length, 1);
+  assert.strictEqual(result.sanitizedFiles[0].content, `password=${MASK}`);
+});
+
+await test("matching ignore + unchanged value - suppressed from report AND original text restored in output", async () => {
+  const before = "fakeIgnoredSecret";
+  const hash = await hashValue(before);
+  const ignoreMap = { [ignoreKeyFor("f.env", "password", "key_name_match")]: hash };
+  const scanResult = {
+    sanitizedFiles: [{ path: "f.env", content: `password=${MASK}` }],
+    reportEntries: [{ file: "f.env", line: 1, key: "password", rule: "key_name_match", before, after: MASK }],
+  };
+  const result = await applyIgnores(scanResult, ignoreMap);
+  assert.strictEqual(result.reportEntries.length, 0, "suppressed from the report entirely");
+  assert.strictEqual(result.sanitizedFiles[0].content, `password=${before}`, "original value restored in the sanitized output");
+});
+
+await test("matching ignore + CHANGED value - reappears, flagged, output stays redacted (not silently suppressed)", async () => {
+  const oldValue = "fakeOldSecret";
+  const staleHash = await hashValue(oldValue); // hash recorded against the OLD value
+  const newValue = "fakeRotatedSecret"; // the value has since changed
+  const ignoreMap = { [ignoreKeyFor("f.env", "password", "key_name_match")]: staleHash };
+  const scanResult = {
+    sanitizedFiles: [{ path: "f.env", content: `password=${MASK}` }],
+    reportEntries: [{ file: "f.env", line: 1, key: "password", rule: "key_name_match", before: newValue, after: MASK }],
+  };
+  const result = await applyIgnores(scanResult, ignoreMap);
+  assert.strictEqual(result.reportEntries.length, 1, "must NOT be silently suppressed");
+  assert.strictEqual(result.reportEntries[0].previously_ignored_value_changed, true);
+  assert.strictEqual(result.sanitizedFiles[0].content, `password=${MASK}`, "stays redacted, not reverted to the new real value");
+});
+
+await test("ignore entry with hash null (recorded with no hash) always reflags rather than suppressing", async () => {
+  const ignoreMap = { [ignoreKeyFor("f.env", "password", "key_name_match")]: null };
+  const scanResult = {
+    sanitizedFiles: [{ path: "f.env", content: `password=${MASK}` }],
+    reportEntries: [{ file: "f.env", line: 1, key: "password", rule: "key_name_match", before: "fakeAnyValue", after: MASK }],
+  };
+  const result = await applyIgnores(scanResult, ignoreMap);
+  assert.strictEqual(result.reportEntries.length, 1);
+  assert.strictEqual(result.reportEntries[0].previously_ignored_value_changed, true);
+});
+
+await test("two findings on the same line sharing identical replacement text - ignoring one restores only that occurrence", async () => {
+  const before1 = "fakeLineSecretOne";
+  const before2 = "fakeLineSecretTwo";
+  const hash1 = await hashValue(before1);
+  // Only the FIRST finding on the line is ignored.
+  const ignoreMap = { [ignoreKeyFor("f.env", "password", "key_name_match")]: hash1 };
+  const scanResult = {
+    sanitizedFiles: [{ path: "f.env", content: `password=${MASK} password2=${MASK}` }],
+    reportEntries: [
+      { file: "f.env", line: 1, key: "password", rule: "key_name_match", before: before1, after: MASK },
+      { file: "f.env", line: 1, key: "password2", rule: "key_name_match", before: before2, after: MASK },
+    ],
+  };
+  const result = await applyIgnores(scanResult, ignoreMap);
+  assert.strictEqual(result.reportEntries.length, 1, "only the second (not ignored) finding remains reported");
+  assert.strictEqual(result.reportEntries[0].before, before2);
+  assert.strictEqual(result.sanitizedFiles[0].content, `password=${before1} password2=${MASK}`, "first occurrence restored, second stays masked");
+});
+
+await test("end-to-end scenario matching the exact desktop-parity spec: ignore -> rescan suppressed -> value changes -> rescan reflagged", async () => {
+  // 1. Original scan finds a secret.
+  const files1 = [{ path: "app.properties", content: "api_key=fakeOriginalKey123" }];
+  const scan1 = scanFiles(files1);
+  assert.strictEqual(scan1.reportEntries.length, 1);
+  const finding = scan1.reportEntries[0];
+
+  // 2. User reviews it and clicks "ignore" - the app hashes the CURRENT value and stores it.
+  const storedHash = await hashValue(finding.before);
+  const ignoreMap = { [ignoreKeyFor(finding.file, finding.key, finding.rule)]: storedHash };
+
+  // 3. Re-scan with the SAME (unchanged) source - ignore should suppress it.
+  const scan2 = scanFiles(files1);
+  const reconciled2 = await applyIgnores(scan2, ignoreMap);
+  assert.strictEqual(reconciled2.reportEntries.length, 0, "unchanged value: suppressed");
+  assert.ok(reconciled2.sanitizedFiles[0].content.includes("fakeOriginalKey123"), "restored to original in the output");
+
+  // 4. The underlying value changes (e.g. key rotated) - re-scan with the SAME STALE ignoreMap.
+  const files2 = [{ path: "app.properties", content: "api_key=fakeRotatedKey456" }];
+  const scan3 = scanFiles(files2);
+  const reconciled3 = await applyIgnores(scan3, ignoreMap);
+  assert.strictEqual(reconciled3.reportEntries.length, 1, "changed value: reappears, not silently suppressed");
+  assert.strictEqual(reconciled3.reportEntries[0].previously_ignored_value_changed, true);
+  assert.ok(!reconciled3.sanitizedFiles[0].content.includes("fakeRotatedKey456"), "new value stays redacted");
+});
+
+// -----------------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failed} failed`);
-if (failed > 0) process.exit(1);
+if (failed > 0) process.exitCode = 1;
+}
+
+main();

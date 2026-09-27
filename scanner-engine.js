@@ -18,6 +18,14 @@
  *   finding instead gets a deterministic, typed placeholder like
  *   <PASSWORD_1>/<API_KEY_1> - see PlaceholderRegistry and scanFiles()'s
  *   `options.placeholderMode` below.
+ * - ignore-list reconciliation (hashValue()/applyIgnores()): same
+ *   hash-verification approach as the desktop app's check_ignore() - a
+ *   finding whose value's hash matches a stored ignore is suppressed; one
+ *   whose value has since changed reappears, flagged, rather than being
+ *   silently suppressed. Persistence itself (IndexedDB) lives in
+ *   storage.js, not here - this file only contains the pure, storage-
+ *   independent reconciliation logic, so it stays testable under plain
+ *   Node with no browser/IndexedDB involved.
  */
 
 const MASK = "***REDACTED***";
@@ -676,6 +684,130 @@ function isLikelyTextFile(path) {
   return !binaryExts.some((ext) => lower.endsWith(ext));
 }
 
+// ---------------------------------------------------------------------
+// Ignore-list reconciliation - mirrors engine.py's hash_value()/
+// check_ignore(): a finding is identified by (file, key, rule), never by
+// its value directly. The stored "ignore" is a one-way SHA-256 hash of the
+// value at the moment it was ignored, so the real value is never written
+// to storage.js/IndexedDB, only its hash - if a later scan's candidate
+// value hashes to something different, the finding reappears (flagged),
+// rather than staying silently suppressed.
+//
+// SHA-256 here uses the Web Crypto API (`crypto.subtle`), available as a
+// standard global in every modern browser AND in Node (used by the test
+// script) - no hand-rolled crypto, no external dependency. Its only
+// downside is that it's Promise-based, which is why this reconciliation
+// happens as a separate pass AFTER scanFiles() rather than inline during
+// redaction (keeping scanFiles() itself fully synchronous, so every
+// existing call site and test is unaffected).
+// ---------------------------------------------------------------------
+
+async function hashValue(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Identifies a finding the same way engine.py's ignore_map keys do:
+// (file, key, rule) - never the value itself. `key` may be null (e.g. a
+// bare value-pattern match with no associated config key/variable name).
+function ignoreKeyFor(file, key, rule) {
+  return `${file}\u0000${key || ""}\u0000${rule}`;
+}
+
+// Replace the (occurrenceIndex)-th occurrence of `search` in `str` with
+// `replacement` (0-indexed). Used to restore a suppressed finding's exact
+// original text even when the same line contains more than one finding
+// that happens to share identical replacement text (e.g. two MASKed values
+// on one line) - each report entry's position in scan order determines
+// which occurrence is "its" occurrence.
+function replaceNthOccurrence(str, search, replacement, occurrenceIndex) {
+  if (!search) return str;
+  let idx = -1;
+  for (let i = 0; i <= occurrenceIndex; i++) {
+    idx = str.indexOf(search, idx + 1);
+    if (idx === -1) return str;
+  }
+  return str.slice(0, idx) + replacement + str.slice(idx + search.length);
+}
+
+/**
+ * Reconcile a completed scanFiles() result against a persisted ignore map.
+ *
+ * `ignoreMap`: a plain object, `{ [ignoreKeyFor(file,key,rule)]: storedHash }`
+ * - exactly what storage.js's getIgnoreMap() returns. Not tied to
+ * IndexedDB or any other storage mechanism here - this function only
+ * consumes a plain object, so it's fully testable without a browser.
+ *
+ * For each report entry:
+ *   - no matching ignore entry at all       -> kept as-is (unchanged)
+ *   - matching entry, hash matches current  -> suppressed: removed from
+ *                                              the report, original text
+ *                                              restored in the output
+ *   - matching entry, hash differs (or was
+ *     never recorded)                       -> kept, flagged
+ *                                              `previously_ignored_value_changed`,
+ *                                              output stays redacted
+ *
+ * Returns a NEW { sanitizedFiles, reportEntries } - does not mutate the
+ * input scanResult.
+ */
+async function applyIgnores(scanResult, ignoreMap) {
+  const survivingEntries = [];
+  const restorations = [];
+  const occurrenceCounters = new Map();
+
+  for (const entry of scanResult.reportEntries) {
+    const occKey = `${entry.file}\u0000${entry.line}\u0000${entry.after}`;
+    const occurrenceIndex = occurrenceCounters.get(occKey) || 0;
+    occurrenceCounters.set(occKey, occurrenceIndex + 1);
+
+    const ignoreKey = ignoreKeyFor(entry.file, entry.key, entry.rule);
+    if (!Object.prototype.hasOwnProperty.call(ignoreMap, ignoreKey)) {
+      survivingEntries.push(entry);
+      continue;
+    }
+
+    const storedHash = ignoreMap[ignoreKey];
+    const currentHash = await hashValue(entry.before);
+    if (storedHash !== null && storedHash === currentHash) {
+      // Still ignored - suppress, and (when there's non-empty replacement
+      // text to look for - an emptied multiline-fragment placeholder has
+      // nothing textual to restore) schedule restoring the original text.
+      if (entry.after) {
+        restorations.push({ file: entry.file, line: entry.line, after: entry.after, before: entry.before, occurrenceIndex });
+      }
+    } else {
+      survivingEntries.push({ ...entry, previously_ignored_value_changed: true });
+    }
+  }
+
+  if (restorations.length === 0) {
+    return { sanitizedFiles: scanResult.sanitizedFiles, reportEntries: survivingEntries };
+  }
+
+  const restorationsByFile = new Map();
+  for (const r of restorations) {
+    if (!restorationsByFile.has(r.file)) restorationsByFile.set(r.file, []);
+    restorationsByFile.get(r.file).push(r);
+  }
+
+  const patchedFiles = scanResult.sanitizedFiles.map((f) => {
+    const fileRestorations = restorationsByFile.get(f.path);
+    if (!fileRestorations || f.binary) return f;
+    const lines = f.content.split("\n");
+    for (const r of fileRestorations) {
+      const idx = r.line - 1;
+      if (lines[idx] !== undefined) {
+        lines[idx] = replaceNthOccurrence(lines[idx], r.after, r.before, r.occurrenceIndex);
+      }
+    }
+    return { path: f.path, content: lines.join("\n") };
+  });
+
+  return { sanitizedFiles: patchedFiles, reportEntries: survivingEntries };
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     scanFiles, MASK,
@@ -683,5 +815,6 @@ if (typeof module !== "undefined") {
     redactConfigLine, redactCodeLine, redactValuePatternsOnly,
     PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
     categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
+    hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
   };
 }
