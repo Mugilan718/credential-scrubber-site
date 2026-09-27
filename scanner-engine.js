@@ -26,11 +26,30 @@
  *   storage.js, not here - this file only contains the pure, storage-
  *   independent reconciliation logic, so it stays testable under plain
  *   Node with no browser/IndexedDB involved.
+ * - config-line shapes beyond bareword "key=value"/"key: value": JSON
+ *   quoted keys, XML element text, and XML/.config attribute pairs
+ *   (<add key=".." value=".."/>) - see findKeyValue()/KV_PATTERN_CONFIGS
+ *   below, ported from engine.py's _KV_JSON_KEY/_KV_XML_ELEMENT/
+ *   _KV_XML_ATTR_PAIR. Redaction now reconstructs the line from the exact
+ *   text before/after the value's own span (quoteWrap()) instead of a
+ *   whole-line substring search, which also fixed a latent bug: a quoted
+ *   value's quotes are now preserved in the output (previously stripped
+ *   for every format, which silently produced invalid JSON for a redacted
+ *   JSON string value).
+ *
+ * Known limitations (not yet ported - out of scope so far, not fixed by
+ * omission):
+ * - YAML's "force_quote" nuance (quoteWrap() here has no equivalent) -
+ *   engine.py double-quotes an unquoted YAML scalar's mask because a bare
+ *   leading "*" is YAML's alias-reference syntax; this file does not yet
+ *   apply that same force-quoting.
+ * - No parser-backed JSON/XML handling - these are still regex/line-based,
+ *   same as engine.py, with the same inherent edge cases that implies.
  */
 
 const MASK = "***REDACTED***";
 
-const CONFIG_EXTENSIONS = new Set([".properties", ".yml", ".yaml", ".json", ".xml", ".ini", ".conf", ".cfg"]);
+const CONFIG_EXTENSIONS = new Set([".properties", ".yml", ".yaml", ".json", ".xml", ".ini", ".conf", ".cfg", ".config"]);
 const CODE_EXTENSIONS = {
   ".java": "java", ".py": "python",
   ".js": "javascript", ".jsx": "javascript", ".ts": "javascript", ".tsx": "javascript",
@@ -400,14 +419,77 @@ function looksHighEntropy(value, minLength = 20, minEntropy = 3.5) {
   return shannonEntropy(v) >= minEntropy;
 }
 
+// Config lines come in more shapes than "key: value"/"key=value" - JSON
+// quoted keys, XML elements, and .config-style <add key=".." value=".."/>
+// pairs all hold a key and a value too, just with different surrounding
+// syntax. Ported from engine.py's _KV_XML_ATTR_PAIR/_KV_XML_ELEMENT/
+// _KV_JSON_KEY/_KV_BAREWORD, tried in the same order (most structurally
+// specific first; order barely matters in practice since they're mutually
+// exclusive by leading character - "<", '"', or a bareword char).
+//
+// Each pattern's `build` function returns [beforeValue, afterValue] - the
+// exact original-line text immediately before/after the value's own span -
+// so redactConfigLine() can reconstruct the line as
+// beforeValue + wrappedReplacement + afterValue instead of a fragile
+// whole-line substring search/replace (which can hit an earlier, unrelated
+// occurrence of the same text, e.g. "secret_key=secret").
+const KV_XML_ATTR_PAIR = /^(?<prefix>\s*<[\w:.-]+\s+[^>]*?\bkey\s*=\s*["'])(?<key>[^"']+)(?<mid>["'][^>]*?\bvalue\s*=\s*["'])(?<value>[^"']*)(?<suffix>["'].*)$/i;
+const KV_XML_ELEMENT = /^(?<prefix>\s*<(?<key>[A-Za-z_][\w.-]*)(?:\s[^>]*)?>)(?<value>[^<]*)(?<suffix><\/\k<key>>\s*)$/;
+const KV_JSON_KEY = /^(?<prefix>\s*"(?<key>[^"]+)"\s*:\s*)(?<value>.*?)(?<suffix>,?\s*)$/;
+const KV_BAREWORD = /^(?<prefix>\s*(?<key>[A-Za-z0-9_.\-\[\]]+)\s*[:=]\s*)(?<value>.*)$/;
+
+const KV_PATTERN_CONFIGS = [
+  { pattern: KV_XML_ATTR_PAIR, build: (g) => [g.prefix + g.key + g.mid, g.suffix] },
+  { pattern: KV_XML_ELEMENT, build: (g) => [g.prefix, g.suffix] },
+  { pattern: KV_JSON_KEY, build: (g) => [g.prefix, g.suffix] },
+  { pattern: KV_BAREWORD, build: (g) => [g.prefix, ""] },
+];
+
+// A bare YAML block-scalar indicator ("|", ">", with an optional chomping
+// "+"/"-" and/or explicit indentation digit, e.g. "|-", ">+4") - like a
+// JSON "{"/"[" opener, this isn't a redactable leaf value; the real content
+// is the indented lines that follow, which this function never sees as
+// this key's value at all.
+const YAML_BLOCK_SCALAR = /^[|>][+-]?\d*$/;
+
+function isNonRedactableValueShape(stripped) {
+  return stripped === "{" || stripped === "[" || YAML_BLOCK_SCALAR.test(stripped);
+}
+
+/**
+ * Extract (key, value, beforeValue, afterValue) from a config line, or
+ * (null, null, null, null) if it doesn't look like any recognized shape
+ * (redactValuePatternsOnly is used instead in that case).
+ */
 function findKeyValue(line) {
-  const m = line.match(/^\s*([A-Za-z0-9_.\-\[\]]+)\s*[:=]\s*(.*)$/);
-  if (!m) return [null, null];
-  return [m[1], m[2]];
+  for (const { pattern, build } of KV_PATTERN_CONFIGS) {
+    const m = pattern.exec(line);
+    if (!m) continue;
+    const value = m.groups.value;
+    if (isNonRedactableValueShape(value.trim())) continue;
+    const [beforeValue, afterValue] = build(m.groups);
+    return [m.groups.key, value, beforeValue, afterValue];
+  }
+  return [null, null, null, null];
+}
+
+// Wrap `replacementText` (MASK or a placeholder token) in the same quote
+// character `value`'s original span used, if any - so a JSON/XML value
+// stays syntactically valid after redaction (an unquoted bare token where
+// a quoted string used to be would corrupt JSON) and other formats keep
+// their original quoting style. Mirrors engine.py's _quote_wrap() (minus
+// YAML's force_quote nuance, a separate, pre-existing, not-yet-ported gap
+// - see the "Known limitations" note in this file's own module comment).
+function quoteWrap(value, replacementText) {
+  const v = value.replace(/\s+$/, "");
+  if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) {
+    return v[0] + replacementText + v[0];
+  }
+  return replacementText;
 }
 
 function redactConfigLine(line, lineNo, filename, reportEntries, registry = null) {
-  const [key, value] = findKeyValue(line);
+  const [key, value, beforeValue, afterValue] = findKeyValue(line);
   if (key === null) return redactValuePatternsOnly(line, lineNo, filename, reportEntries, registry);
   if (value.trim() === "") return line;
 
@@ -418,7 +500,7 @@ function redactConfigLine(line, lineNo, filename, reportEntries, registry = null
       ? registry.getOrCreate(mostSpecificCategory(matchedPatterns.map(categoryForKeyPattern)), normalizeValueForIdentity(value))
       : MASK;
     reportEntries.push({ file: filename, line: lineNo, key, rule: "key_name_match", before: value, after: replacement });
-    return line.includes(value) ? line.replace(value, replacement) : `${key}=${replacement}`;
+    return beforeValue + quoteWrap(value, replacement) + afterValue;
   }
 
   if (isPlaceholder(value)) return line;
@@ -435,7 +517,7 @@ function redactConfigLine(line, lineNo, filename, reportEntries, registry = null
       ? registry.getOrCreate(categoryForValuePattern(reason), normalizeValueForIdentity(value))
       : MASK;
     reportEntries.push({ file: filename, line: lineNo, key, rule: reason, before: value, after: replacement });
-    return line.includes(value) ? line.replace(value, replacement) : `${key}=${replacement}`;
+    return beforeValue + quoteWrap(value, replacement) + afterValue;
   }
 
   return line;
@@ -890,6 +972,7 @@ if (typeof module !== "undefined") {
     categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
     hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
     computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist,
+    findKeyValue, quoteWrap, classifyFile,
     getBaseRuleSnapshot,
   };
 }

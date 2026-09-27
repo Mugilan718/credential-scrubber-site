@@ -18,6 +18,7 @@ const {
   categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
   hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
   computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist, getBaseRuleSnapshot,
+  findKeyValue, quoteWrap, classifyFile,
 } = require(path.join(__dirname, "..", "scanner-engine.js"));
 
 let passed = 0;
@@ -841,6 +842,148 @@ await test("does not break Phase 1 (multiline) / Phase 2 (placeholder mode) when
   assert.match(result.reportEntries[0].after, /^</, "placeholder mode still applies alongside rule overrides");
   assert.ok(!result.sanitizedFiles[0].content.includes("fakePart1"));
   assert.ok(!result.sanitizedFiles[0].content.includes("fakePart2"));
+});
+
+// -----------------------------------------------------------------------
+// JSON / XML / .config detection - ported from engine.py's
+// _KV_XML_ATTR_PAIR/_KV_XML_ELEMENT/_KV_JSON_KEY, using the desktop's own
+// pinned regression fixtures (tests/test_regressions.py in the app repo)
+// as the reference input for each, adapted only by dropping the trailing
+// "\n" the Python fixtures include - lines reach redactConfigLine() in
+// this codebase without a trailing newline (scanFiles() splits on \r?\n
+// first), consistent with every other existing test in this file.
+// -----------------------------------------------------------------------
+
+console.log("\nJSON quoted-key detection (desktop-pinned fixtures):");
+
+await test("[desktop: test_f1_json_quoted_key_is_detected] quoted JSON key/value is detected and redacted, quotes preserved", () => {
+  const entries = [];
+  const out = redactConfigLine('  "password": "fake-supersecret123",', 1, "f.json", entries);
+  assert.ok(!out.includes("fake-supersecret123"));
+  assert.strictEqual(entries.length, 1);
+  assert.strictEqual(entries[0].key, "password");
+  assert.strictEqual(entries[0].rule, "key_name_match");
+  assert.strictEqual(out.trim(), `"password": "${MASK}",`);
+});
+
+await test("[desktop: test_f1_json_short_low_entropy_secret_is_still_caught_via_key_name] a short, low-entropy value is still caught via the key name", () => {
+  const entries = [];
+  const out = redactConfigLine('  "db_password" : "hunter2",', 1, "f.json", entries);
+  assert.ok(!out.includes("hunter2"));
+  assert.strictEqual(entries[0].rule, "key_name_match");
+});
+
+await test("[desktop: test_f1_json_object_opener_is_not_treated_as_a_scalar_value] a nested-object opener is left completely untouched", () => {
+  const entries = [];
+  const line = '  "auth": {';
+  const out = redactConfigLine(line, 1, "f.json", entries);
+  assert.strictEqual(out, line);
+  assert.strictEqual(entries.length, 0);
+});
+
+await test("own fixture: JSON array opener is also left untouched (same guard as the object-opener case)", () => {
+  const entries = [];
+  const line = '  "tags": [';
+  const out = redactConfigLine(line, 1, "f.json", entries);
+  assert.strictEqual(out, line);
+  assert.strictEqual(entries.length, 0);
+});
+
+await test("own fixture: JSON value-pattern-only match (no key hit) is still detected through the new JSON shape", () => {
+  const entries = [];
+  const out = redactConfigLine('  "note": "AKIAABCDEFGHIJKLMNOP",', 1, "f.json", entries);
+  assert.ok(!out.includes("AKIAABCDEFGHIJKLMNOP"));
+  assert.strictEqual(entries[0].rule, "aws_access_key_id");
+});
+
+await test("own fixture: placeholder mode on a JSON line still preserves the surrounding quotes", () => {
+  const reg = new PlaceholderRegistry();
+  const entries = [];
+  const out = redactConfigLine('  "api_key": "fakeJsonKey123",', 1, "f.json", entries, reg);
+  assert.match(out.trim(), /^"api_key": "<API_KEY_\d+>",$/);
+});
+
+console.log("\nXML element-text detection (desktop-pinned fixtures):");
+
+await test("[desktop: test_f1_xml_element_is_detected] <password>value</password> is detected and redacted", () => {
+  const entries = [];
+  const out = redactConfigLine("<password>fake-password</password>", 1, "f.xml", entries);
+  assert.ok(!out.includes("fake-password"));
+  assert.strictEqual(out.trim(), `<password>${MASK}</password>`);
+});
+
+await test("own fixture: XML element with a non-matching tag name but a suspicious VALUE is still caught via value-pattern", () => {
+  const entries = [];
+  const out = redactConfigLine("<note>AKIAABCDEFGHIJKLMNOP</note>", 1, "f.xml", entries);
+  assert.ok(!out.includes("AKIAABCDEFGHIJKLMNOP"));
+  assert.strictEqual(entries[0].rule, "aws_access_key_id");
+});
+
+await test("own fixture: XML element with harmless content is left untouched", () => {
+  const entries = [];
+  const line = "<environment>production</environment>";
+  const out = redactConfigLine(line, 1, "f.xml", entries);
+  assert.strictEqual(out, line);
+  assert.strictEqual(entries.length, 0);
+});
+
+console.log("\nXML/.config attribute-pair detection (desktop-pinned fixtures):");
+
+await test("[desktop: test_f1_dotnet_config_attribute_pair_is_detected] <add key=\"password\" value=\"...\"/> is detected, key attribute untouched", () => {
+  const entries = [];
+  const line = '    <add key="password" value="fake-password"/>';
+  const out = redactConfigLine(line, 1, "Web.config", entries);
+  assert.ok(!out.includes("fake-password"));
+  assert.ok(out.includes('key="password"'), "the key attribute itself is untouched");
+  assert.ok(out.includes(`value="${MASK}"`));
+});
+
+await test("[desktop: test_f1_dotnet_config_connection_string_attribute] a ConnectionString-style attribute pair is detected", () => {
+  const entries = [];
+  const line = '<add key="ConnectionString" value="Server=fake-host;Password=fake-Sup3rSecret!"/>';
+  const out = redactConfigLine(line, 1, "Web.config", entries);
+  assert.ok(!out.includes("fake-Sup3rSecret!"));
+  assert.strictEqual(entries[0].key, "ConnectionString");
+});
+
+await test("[desktop: test_f1_dotconfig_extension_is_classified_as_config] .config files are classified as config", () => {
+  assert.strictEqual(classifyFile("Web.config"), "config");
+  assert.strictEqual(classifyFile("App.config"), "config");
+});
+
+await test("own fixture: full scanFiles() pipeline correctly redacts a .config file end-to-end", () => {
+  const files = [{ path: "Web.config", content: '<add key="password" value="fakeEndToEnd123"/>' }];
+  const { sanitizedFiles, reportEntries } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.ok(!sanitizedFiles[0].content.includes("fakeEndToEnd123"));
+});
+
+await test("own fixture: single-quoted .config attribute values are also matched (not just double-quoted)", () => {
+  const entries = [];
+  const line = "<add key='password' value='fake-single-quoted'/>";
+  const out = redactConfigLine(line, 1, "Web.config", entries);
+  assert.ok(!out.includes("fake-single-quoted"));
+  assert.ok(out.includes(`value='${MASK}'`));
+});
+
+console.log("\nQuote-preservation fix (bonus correctness improvement from this refactor):");
+
+await test("own fixture: a double-quoted properties-style value now preserves its quotes (previously stripped entirely)", () => {
+  const entries = [];
+  const out = redactConfigLine('password = "fakeQuotedProps123"', 1, "f.properties", entries);
+  assert.strictEqual(out, `password = "${MASK}"`);
+});
+
+await test("own fixture: YAML block-scalar header is left alone even when the key itself matches a key pattern", () => {
+  // "encryption_key" matches the "encryption[_-]?key" key pattern, but the
+  // VALUE here is a bare block-scalar header, not a redactable leaf - the
+  // real content is the indented lines that would follow, never seen as
+  // this key's value at all (same guard as the JSON {/[ opener case).
+  const entries = [];
+  const line = "encryption_key: |";
+  const out = redactConfigLine(line, 1, "f.yaml", entries);
+  assert.strictEqual(out, line);
+  assert.strictEqual(entries.length, 0);
 });
 
 // -----------------------------------------------------------------------
