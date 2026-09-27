@@ -140,7 +140,16 @@ const FALLBACK_PLACEHOLDER_ALLOWLIST = [
   "0.0.0.0", "none", "null", "n/a", "todo", "fixme", "insert_secret_here",
 ];
 
-const KEY_PATTERN_SOURCES = (SHARED_RULES && SHARED_RULES.key_patterns) || FALLBACK_KEY_PATTERN_SOURCES;
+// BASE_* below is the shared ruleset exactly as rules-data.js/window.RULES
+// (or the fallback snapshot) provides it - a plain, immutable snapshot,
+// never written to by anything in this file. Phase 4's local rule editor
+// layers a per-browser override on TOP of this at scan time (see
+// computeEffectiveKeyPatterns()/computeEffectivePlaceholderAllowlist() and
+// scanFiles()'s `options.ruleOverrides` below) without ever touching these
+// constants - editing your own session's rules can never drift the shared
+// base rules-data.js was synced from.
+const BASE_KEY_PATTERN_SOURCES = (SHARED_RULES && SHARED_RULES.key_patterns) || FALLBACK_KEY_PATTERN_SOURCES;
+const BASE_PLACEHOLDER_ALLOWLIST_LIST = (SHARED_RULES && SHARED_RULES.placeholder_allowlist) || FALLBACK_PLACEHOLDER_ALLOWLIST;
 
 const VALUE_PATTERNS = (SHARED_RULES && SHARED_RULES.value_patterns)
   ? SHARED_RULES.value_patterns.map((vp) => [vp.name, compileSharedPattern(vp.regex)])
@@ -154,9 +163,54 @@ const CODE_PATTERNS = (SHARED_RULES && SHARED_RULES.code_patterns)
     )
   : FALLBACK_CODE_PATTERNS;
 
-const PLACEHOLDER_ALLOWLIST = new Set(
-  (SHARED_RULES && SHARED_RULES.placeholder_allowlist) || FALLBACK_PLACEHOLDER_ALLOWLIST
-);
+// The lists detection actually consults. Equal to the base by default;
+// temporarily reassigned (never mutated in place - always to a brand-new
+// array/Set) to an override-merged view for the duration of a single
+// scanFiles() call, then restored - see scanFiles()'s try/finally below.
+// This file is single-threaded/synchronous end to end (no `await` appears
+// anywhere between the reassignment and its restoration), so there is no
+// reentrancy hazard today; if scanFiles() ever became async or callable
+// concurrently, this pattern would need to change to explicit parameter
+// threading instead.
+let KEY_PATTERN_SOURCES = BASE_KEY_PATTERN_SOURCES;
+let PLACEHOLDER_ALLOWLIST = new Set(BASE_PLACEHOLDER_ALLOWLIST_LIST);
+
+// ---------------------------------------------------------------------
+// Local rule overrides (Phase 4) - a per-browser-session layer on top of
+// BASE_KEY_PATTERN_SOURCES/BASE_PLACEHOLDER_ALLOWLIST_LIST, never a
+// modification of them. `overrides` is a plain object (exactly what
+// storage.js's getRuleOverrides() returns):
+//   { keyPatternsAdded, keyPatternsRemoved,
+//     placeholderAllowlistAdded, placeholderAllowlistRemoved }
+// Both functions always return a BRAND-NEW array - the base array/Set
+// itself is only ever read, never spliced/pushed/deleted into.
+// ---------------------------------------------------------------------
+
+function computeEffectiveKeyPatterns(overrides) {
+  if (!overrides) return BASE_KEY_PATTERN_SOURCES.slice();
+  const removed = new Set(overrides.keyPatternsRemoved || []);
+  const added = overrides.keyPatternsAdded || [];
+  return BASE_KEY_PATTERN_SOURCES.filter((p) => !removed.has(p)).concat(added);
+}
+
+function computeEffectivePlaceholderAllowlist(overrides) {
+  if (!overrides) return BASE_PLACEHOLDER_ALLOWLIST_LIST.slice();
+  const removed = new Set((overrides.placeholderAllowlistRemoved || []).map((v) => v.toLowerCase()));
+  const added = (overrides.placeholderAllowlistAdded || []).map((v) => v.toLowerCase());
+  return BASE_PLACEHOLDER_ALLOWLIST_LIST.filter((p) => !removed.has(p.toLowerCase())).concat(added);
+}
+
+// For tests (and anything else that wants to prove the base was never
+// touched): a snapshot of the shared base lists, independent of whatever
+// KEY_PATTERN_SOURCES/PLACEHOLDER_ALLOWLIST currently point at. Safe to
+// call any time - even mid-scan, this always reads the untouched
+// BASE_* constants, never the temporarily-swapped active ones.
+function getBaseRuleSnapshot() {
+  return {
+    keyPatternSources: BASE_KEY_PATTERN_SOURCES.slice(),
+    placeholderAllowlist: BASE_PLACEHOLDER_ALLOWLIST_LIST.slice(),
+  };
+}
 
 // ---------------------------------------------------------------------
 // Placeholder mode - ported from engine.py's PlaceholderRegistry /
@@ -637,6 +691,13 @@ function classifyFile(path) {
  * gets the same "<CATEGORY_N>" token anywhere in this one scan; different
  * values never collide on one token. The registry lives only for the
  * duration of this function call and is never returned or persisted.
+ * `options.ruleOverrides`: opt-in, defaults to null - a per-browser-session
+ * override layered on top of the shared base key_patterns/
+ * placeholder_allowlist for the duration of THIS call only (see
+ * computeEffectiveKeyPatterns()/computeEffectivePlaceholderAllowlist()
+ * above). The base rules-data.js/window.RULES data is never modified,
+ * regardless of what's passed here - always restored before this function
+ * returns, even if it throws.
  * Returns { sanitizedFiles: [{path, content}], reportEntries: [...] }
  */
 function scanFiles(files, options = {}) {
@@ -644,38 +705,50 @@ function scanFiles(files, options = {}) {
   const sanitizedFiles = [];
   const registry = options.placeholderMode ? new PlaceholderRegistry() : null;
 
-  for (const file of files) {
-    const parts = file.path.split("/");
-    if (parts.some((p) => SKIP_DIRS.has(p))) continue;
-
-    const classification = classifyFile(file.path);
-    const lines = file.content.split(/\r?\n/);
-
-    if (classification === "config") {
-      const out = lines.map((l, i) => redactConfigLine(l, i + 1, file.path, reportEntries, registry));
-      sanitizedFiles.push({ path: file.path, content: out.join("\n") });
-    } else if (classification && classification.startsWith("code:")) {
-      const lang = classification.split(":")[1];
-      if (lang === "python") {
-        scanMultilinePython(lines, file.path, reportEntries, registry);
-      }
-      if (PLUS_CONCAT_LANGS.has(lang)) {
-        scanMultilinePlus(lines, file.path, reportEntries, registry);
-      }
-      const out = lines.map((l, i) => {
-        if (alreadyRedactedText(l, registry)) return l; // already redacted by a multiline pass above - don't double-process
-        return redactCodeLine(l, lang, i + 1, file.path, reportEntries, registry);
-      });
-      sanitizedFiles.push({ path: file.path, content: out.join("\n") });
-    } else if (classification === null && isLikelyTextFile(file.path)) {
-      const out = lines.map((l, i) => redactValuePatternsOnly(l, i + 1, file.path, reportEntries, registry));
-      sanitizedFiles.push({ path: file.path, content: out.join("\n") });
-    } else {
-      sanitizedFiles.push({ path: file.path, content: file.content, binary: true });
-    }
+  const savedKeyPatternSources = KEY_PATTERN_SOURCES;
+  const savedPlaceholderAllowlist = PLACEHOLDER_ALLOWLIST;
+  if (options.ruleOverrides) {
+    KEY_PATTERN_SOURCES = computeEffectiveKeyPatterns(options.ruleOverrides);
+    PLACEHOLDER_ALLOWLIST = new Set(computeEffectivePlaceholderAllowlist(options.ruleOverrides));
   }
 
-  return { sanitizedFiles, reportEntries };
+  try {
+    for (const file of files) {
+      const parts = file.path.split("/");
+      if (parts.some((p) => SKIP_DIRS.has(p))) continue;
+
+      const classification = classifyFile(file.path);
+      const lines = file.content.split(/\r?\n/);
+
+      if (classification === "config") {
+        const out = lines.map((l, i) => redactConfigLine(l, i + 1, file.path, reportEntries, registry));
+        sanitizedFiles.push({ path: file.path, content: out.join("\n") });
+      } else if (classification && classification.startsWith("code:")) {
+        const lang = classification.split(":")[1];
+        if (lang === "python") {
+          scanMultilinePython(lines, file.path, reportEntries, registry);
+        }
+        if (PLUS_CONCAT_LANGS.has(lang)) {
+          scanMultilinePlus(lines, file.path, reportEntries, registry);
+        }
+        const out = lines.map((l, i) => {
+          if (alreadyRedactedText(l, registry)) return l; // already redacted by a multiline pass above - don't double-process
+          return redactCodeLine(l, lang, i + 1, file.path, reportEntries, registry);
+        });
+        sanitizedFiles.push({ path: file.path, content: out.join("\n") });
+      } else if (classification === null && isLikelyTextFile(file.path)) {
+        const out = lines.map((l, i) => redactValuePatternsOnly(l, i + 1, file.path, reportEntries, registry));
+        sanitizedFiles.push({ path: file.path, content: out.join("\n") });
+      } else {
+        sanitizedFiles.push({ path: file.path, content: file.content, binary: true });
+      }
+    }
+
+    return { sanitizedFiles, reportEntries };
+  } finally {
+    KEY_PATTERN_SOURCES = savedKeyPatternSources;
+    PLACEHOLDER_ALLOWLIST = savedPlaceholderAllowlist;
+  }
 }
 
 function isLikelyTextFile(path) {
@@ -816,5 +889,7 @@ if (typeof module !== "undefined") {
     PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
     categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
     hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
+    computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist,
+    getBaseRuleSnapshot,
   };
 }

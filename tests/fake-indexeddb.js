@@ -118,10 +118,16 @@ function fakeIndexedDBOpen(name, version) {
     dbEntry = { version, stores: new Map() };
     databases.set(name, dbEntry);
   }
+  // Real IndexedDB fires onupgradeneeded whenever the requested version is
+  // HIGHER than what's on disk - not just for a brand-new database - so an
+  // existing user's scanHistory/ignores survive a later version bump that
+  // only adds a new store (e.g. Phase 4's ruleOverrides). Simulate that.
+  const needsUpgrade = isNew || version > dbEntry.version;
+  if (needsUpgrade) dbEntry.version = version;
   const dbHandle = makeDbHandle(dbEntry);
   request.result = dbHandle;
   queueMicrotask(() => {
-    if (isNew && request.onupgradeneeded) {
+    if (needsUpgrade && request.onupgradeneeded) {
       request.onupgradeneeded({ target: request });
     }
     if (request.onsuccess) request.onsuccess({ target: request });

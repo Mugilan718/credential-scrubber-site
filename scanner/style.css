@@ -312,6 +312,108 @@ a { color: inherit; }
   padding: 12px 0;
 }
 
+/* ---------- Rule editor ---------- */
+
+.rule-editor-panel {
+  width: 100%;
+  max-width: 640px;
+  margin: 32px auto 0;
+  padding-top: 32px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.rule-editor-group { margin-top: 20px; }
+
+.rule-editor-group h3 {
+  font-family: var(--display);
+  font-size: 14.5px;
+  margin: 0 0 8px;
+}
+
+.rule-editor-hint {
+  font-size: 12px;
+  color: #6B7280;
+  margin: 0 0 10px;
+}
+
+.rule-editor-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.rule-editor-add input[type="text"] {
+  flex: 1;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: var(--bg-panel);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.rule-editor-add input[type="text"]:focus {
+  outline: none;
+  border-color: var(--glow-cyan);
+}
+
+.rule-editor-error {
+  color: var(--danger, #F2545B);
+  font-size: 12px;
+  margin: 0 0 8px;
+  min-height: 1em;
+}
+
+.rule-editor-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
+
+.rule-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.rule-editor-row.is-disabled { opacity: 0.45; }
+
+.rule-editor-text {
+  flex: 1;
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-editor-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+
+.rule-editor-tag-custom { color: var(--glow-cyan); border-color: rgba(0,229,199,0.35); }
+
+.rule-editor-toggle {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.18);
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rule-editor-toggle:hover { border-color: var(--glow-cyan); color: var(--ink); }
+
 .scanner-footer {
   text-align: center;
   padding: 24px;

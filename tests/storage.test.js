@@ -17,6 +17,7 @@ const {
   openScannerDB, ignoreKeyFor,
   saveScanHistoryEntry, listScanHistory, clearScanHistory,
   setIgnore, removeIgnore, getIgnoreMap,
+  getRuleOverrides, saveRuleOverrides, resetRuleOverrides,
 } = require(path.join(__dirname, "..", "scanner", "storage.js"));
 
 let passed = 0;
@@ -140,6 +141,100 @@ await test("resetFakeIndexedDB() (simulating cleared browser data) actually wipe
   const dbAfterClear = await openScannerDB();
   assert.deepStrictEqual(await getIgnoreMap(dbAfterClear), {});
   assert.deepStrictEqual(await listScanHistory(dbAfterClear), []);
+});
+
+console.log("\nRule overrides (Phase 4):");
+
+await test("getRuleOverrides() returns an empty override set when nothing has been saved yet", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  const overrides = await getRuleOverrides(db);
+  assert.deepStrictEqual(overrides.keyPatternsAdded, []);
+  assert.deepStrictEqual(overrides.keyPatternsRemoved, []);
+  assert.deepStrictEqual(overrides.placeholderAllowlistAdded, []);
+  assert.deepStrictEqual(overrides.placeholderAllowlistRemoved, []);
+});
+
+await test("saveRuleOverrides() + getRuleOverrides() round-trips a full override set", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  await saveRuleOverrides(db, {
+    keyPatternsAdded: ["totallycustomsecret"],
+    keyPatternsRemoved: ["password"],
+    placeholderAllowlistAdded: ["myteamtoken"],
+    placeholderAllowlistRemoved: [],
+  });
+  const overrides = await getRuleOverrides(db);
+  assert.deepStrictEqual(overrides.keyPatternsAdded, ["totallycustomsecret"]);
+  assert.deepStrictEqual(overrides.keyPatternsRemoved, ["password"]);
+  assert.deepStrictEqual(overrides.placeholderAllowlistAdded, ["myteamtoken"]);
+});
+
+await test("saveRuleOverrides() overwrites the previous saved set (single record, not appended)", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  await saveRuleOverrides(db, { keyPatternsAdded: ["first"], keyPatternsRemoved: [] });
+  await saveRuleOverrides(db, { keyPatternsAdded: ["second"], keyPatternsRemoved: [] });
+  const overrides = await getRuleOverrides(db);
+  assert.deepStrictEqual(overrides.keyPatternsAdded, ["second"]);
+});
+
+await test("resetRuleOverrides() returns to the empty (base-only) state", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  await saveRuleOverrides(db, { keyPatternsAdded: ["custom"], keyPatternsRemoved: [] });
+  await resetRuleOverrides(db);
+  const overrides = await getRuleOverrides(db);
+  assert.deepStrictEqual(overrides.keyPatternsAdded, []);
+});
+
+await test("rule overrides persist after closing and reopening the 'tab'", async () => {
+  resetFakeIndexedDB();
+  const dbBeforeClose = await openScannerDB();
+  await saveRuleOverrides(dbBeforeClose, { keyPatternsAdded: ["custom"], keyPatternsRemoved: ["password"] });
+  const dbAfterReopen = await openScannerDB();
+  const overrides = await getRuleOverrides(dbAfterReopen);
+  assert.deepStrictEqual(overrides.keyPatternsAdded, ["custom"]);
+  assert.deepStrictEqual(overrides.keyPatternsRemoved, ["password"]);
+});
+
+console.log("\nDatabase migration (simulating an existing Phase 3 user upgrading to Phase 4):");
+
+await test("an existing v1 database (scanHistory + ignores only) upgrades to v2 without losing data, and gains a working ruleOverrides store", async () => {
+  resetFakeIndexedDB();
+
+  // Manually open at v1 with ONLY the two Phase-3 stores, exactly as an
+  // existing user's browser would already have on disk - bypassing
+  // storage.js's own openScannerDB() (which always requests the CURRENT
+  // version) so this test can start from a genuinely older schema.
+  const dbV1 = await new Promise((resolve, reject) => {
+    const req = indexedDB.open("credential-scrubber-scanner", 1);
+    req.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      db.createObjectStore("scanHistory", { keyPath: "id", autoIncrement: true });
+      db.createObjectStore("ignores", { keyPath: "ignoreKey" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  await new Promise((resolve, reject) => {
+    const tx = dbV1.transaction("scanHistory", "readwrite");
+    const r = tx.objectStore("scanHistory").add({ timestamp: Date.now(), fileCount: 2, findingCount: 1, entries: [] });
+    r.onsuccess = () => resolve();
+    r.onerror = () => reject(r.error);
+  });
+
+  // Now the page loads Phase 4's code, which calls storage.js's
+  // openScannerDB() - requesting the CURRENT version (2).
+  const dbV2 = await openScannerDB();
+  const history = await listScanHistory(dbV2);
+  assert.strictEqual(history.length, 1, "the pre-existing Phase 3 scan history survived the upgrade");
+  assert.strictEqual(history[0].fileCount, 2);
+
+  // And the new store actually works, not just exists.
+  await saveRuleOverrides(dbV2, { keyPatternsAdded: ["custom"], keyPatternsRemoved: [] });
+  const overrides = await getRuleOverrides(dbV2);
+  assert.deepStrictEqual(overrides.keyPatternsAdded, ["custom"]);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

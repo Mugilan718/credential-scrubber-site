@@ -17,6 +17,7 @@ const {
   PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
   categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
   hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
+  computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist, getBaseRuleSnapshot,
 } = require(path.join(__dirname, "..", "scanner-engine.js"));
 
 let passed = 0;
@@ -727,6 +728,119 @@ await test("end-to-end scenario matching the exact desktop-parity spec: ignore -
   assert.strictEqual(reconciled3.reportEntries.length, 1, "changed value: reappears, not silently suppressed");
   assert.strictEqual(reconciled3.reportEntries[0].previously_ignored_value_changed, true);
   assert.ok(!reconciled3.sanitizedFiles[0].content.includes("fakeRotatedKey456"), "new value stays redacted");
+});
+
+// -----------------------------------------------------------------------
+// PHASE 4 - visual rule editor: per-session overrides layered on the base
+// -----------------------------------------------------------------------
+
+console.log("\ncomputeEffectiveKeyPatterns() / computeEffectivePlaceholderAllowlist() - pure merge logic:");
+
+await test("no overrides - effective list equals the base list (same content, different array instance)", () => {
+  const base = getBaseRuleSnapshot();
+  const effective = computeEffectiveKeyPatterns(null);
+  assert.deepStrictEqual(effective, base.keyPatternSources);
+});
+
+await test("added key pattern appears in the effective list, base list is untouched", () => {
+  const before = getBaseRuleSnapshot();
+  const effective = computeEffectiveKeyPatterns({ keyPatternsAdded: ["totallycustomsecret"], keyPatternsRemoved: [] });
+  assert.ok(effective.includes("totallycustomsecret"));
+  const after = getBaseRuleSnapshot();
+  assert.deepStrictEqual(before, after, "base snapshot must be byte-identical before and after");
+});
+
+await test("removed key pattern is absent from the effective list, base list still has it", () => {
+  const effective = computeEffectiveKeyPatterns({ keyPatternsAdded: [], keyPatternsRemoved: ["password"] });
+  assert.ok(!effective.includes("password"));
+  const base = getBaseRuleSnapshot();
+  assert.ok(base.keyPatternSources.includes("password"), "base is untouched - still has 'password'");
+});
+
+await test("placeholder-allowlist add/remove, case-insensitive", () => {
+  const effective = computeEffectivePlaceholderAllowlist({
+    placeholderAllowlistAdded: ["MyTeamsSharedFakeToken"],
+    placeholderAllowlistRemoved: ["DUMMY"], // base has "dummy" - must match case-insensitively
+  });
+  assert.ok(effective.includes("myteamssharedfaketoken"));
+  assert.ok(!effective.map((v) => v.toLowerCase()).includes("dummy"));
+});
+
+console.log("\nscanFiles({ ruleOverrides }) - overrides actually affect detection, base rules never modified:");
+
+await test("adding a custom key pattern makes scanFiles() detect a key it wouldn't otherwise", () => {
+  const files = [{ path: "app.properties", content: "totallycustomsecret=fakeCustomValue123" }];
+  const withoutOverride = scanFiles(files);
+  assert.strictEqual(withoutOverride.reportEntries.length, 0, "not detected without the override");
+
+  const withOverride = scanFiles(files, { ruleOverrides: { keyPatternsAdded: ["totallycustomsecret"], keyPatternsRemoved: [] } });
+  assert.strictEqual(withOverride.reportEntries.length, 1, "detected once the user adds this pattern locally");
+  assert.ok(!withOverride.sanitizedFiles[0].content.includes("fakeCustomValue123"));
+});
+
+await test("removing 'password' via override stops THIS scan from flagging it, without touching the base", () => {
+  const files = [{ path: "app.properties", content: "password=fakeStillSecret123" }];
+  const withOverride = scanFiles(files, { ruleOverrides: { keyPatternsAdded: [], keyPatternsRemoved: ["password"] } });
+  assert.strictEqual(withOverride.reportEntries.length, 0, "suppressed for this scan by the local override");
+
+  // A later scan with NO override must behave exactly as before - the
+  // override must not have leaked into the shared base.
+  const withoutOverride = scanFiles(files);
+  assert.strictEqual(withoutOverride.reportEntries.length, 1, "base behavior fully restored for a scan with no override");
+});
+
+await test("base rule snapshot is byte-identical before and after a scan that uses overrides", () => {
+  const before = getBaseRuleSnapshot();
+  scanFiles(
+    [{ path: "app.properties", content: "password=fakeVal\ncustomthing=fakeVal2" }],
+    { ruleOverrides: { keyPatternsAdded: ["customthing"], keyPatternsRemoved: ["password"] } }
+  );
+  const after = getBaseRuleSnapshot();
+  assert.deepStrictEqual(before, after);
+});
+
+await test("adding a placeholder-allowlist entry suppresses a value/entropy-only finding for this scan only", () => {
+  const files = [{ path: "app.properties", content: "some_value=MyTeamsSharedFakeToken1234567890AB" }];
+  const withoutOverride = scanFiles(files);
+  assert.strictEqual(withoutOverride.reportEntries.length, 1, "flagged as high-entropy without the override");
+
+  const withOverride = scanFiles(files, {
+    ruleOverrides: { placeholderAllowlistAdded: ["myteamssharedfaketoken1234567890ab"], placeholderAllowlistRemoved: [] },
+  });
+  assert.strictEqual(withOverride.reportEntries.length, 0, "suppressed once locally allow-listed");
+
+  const afterOverride = scanFiles(files);
+  assert.strictEqual(afterOverride.reportEntries.length, 1, "base behavior restored for a scan with no override");
+});
+
+await test("overrides reach multiline detection too (findKeyMatches consults the same effective KEY_PATTERN_SOURCES scanFiles() swaps in)", () => {
+  const lines = ["totallycustomsecret = (", '    "fake"', '    "secret"', ")"];
+
+  const withoutOverrideEntries = [];
+  scanMultilinePython(lines.slice(), "f.py", withoutOverrideEntries);
+  assert.strictEqual(withoutOverrideEntries.length, 0, "not matched without the override");
+
+  const files = [{ path: "f.py", content: lines.join("\n") }];
+  const withOverride = scanFiles(files, { ruleOverrides: { keyPatternsAdded: ["totallycustomsecret"], keyPatternsRemoved: [] } });
+  assert.strictEqual(withOverride.reportEntries.length, 2, "multiline concatenation now matched via the added key pattern");
+});
+
+await test("does not break Phase 1 (multiline) / Phase 2 (placeholder mode) when combined with ruleOverrides", () => {
+  const files = [{
+    path: "Config.java",
+    content: [
+      'String totallycustomsecret = "fakePart1" +',
+      '    "fakePart2";',
+    ].join("\n"),
+  }];
+  const result = scanFiles(files, {
+    placeholderMode: true,
+    ruleOverrides: { keyPatternsAdded: ["totallycustomsecret"], keyPatternsRemoved: [] },
+  });
+  assert.strictEqual(result.reportEntries.length, 2);
+  assert.match(result.reportEntries[0].after, /^</, "placeholder mode still applies alongside rule overrides");
+  assert.ok(!result.sanitizedFiles[0].content.includes("fakePart1"));
+  assert.ok(!result.sanitizedFiles[0].content.includes("fakePart2"));
 });
 
 // -----------------------------------------------------------------------

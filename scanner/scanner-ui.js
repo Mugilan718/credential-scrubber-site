@@ -14,10 +14,27 @@
   const scanHistoryPanel = document.getElementById("scanHistoryPanel");
   const scanHistoryList = document.getElementById("scanHistoryList");
   const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+  const ruleEditorPanel = document.getElementById("ruleEditorPanel");
+  const resetRulesBtn = document.getElementById("resetRulesBtn");
+  const newKeyPatternInput = document.getElementById("newKeyPatternInput");
+  const addKeyPatternBtn = document.getElementById("addKeyPatternBtn");
+  const keyPatternError = document.getElementById("keyPatternError");
+  const keyPatternList = document.getElementById("keyPatternList");
+  const newAllowlistInput = document.getElementById("newAllowlistInput");
+  const addAllowlistBtn = document.getElementById("addAllowlistBtn");
+  const allowlistList = document.getElementById("allowlistList");
 
   let lastSanitizedFiles = [];
   let lastReportEntries = [];
   let lastFilesScanned = 0;
+
+  // This browser's local rule overrides (Phase 4) - loaded once at
+  // startup, kept in memory, and persisted back to IndexedDB after every
+  // edit. Always layered ON TOP of the shared base rules at scan time
+  // (scanFiles()'s `ruleOverrides` option) - never written into
+  // rules-data.js/window.RULES, which stay exactly as synced from the
+  // Python project regardless of what's edited here.
+  let currentOverrides = { keyPatternsAdded: [], keyPatternsRemoved: [], placeholderAllowlistAdded: [], placeholderAllowlistRemoved: [] };
 
   // Local-only persistence (scan history, ignore list) - IndexedDB is
   // near-universal in modern browsers, but this degrades gracefully rather
@@ -28,8 +45,9 @@
     ? ScannerStorage.openScannerDB().catch(() => null)
     : Promise.resolve(null);
 
-  if (!storageSupported && scanHistoryPanel) {
-    scanHistoryPanel.classList.add("hidden");
+  if (!storageSupported) {
+    if (scanHistoryPanel) scanHistoryPanel.classList.add("hidden");
+    if (ruleEditorPanel) ruleEditorPanel.classList.add("hidden");
   }
 
   async function getDb() {
@@ -135,7 +153,7 @@
     await new Promise((r) => setTimeout(r, 30));
 
     const placeholderMode = !!(placeholderModeToggle && placeholderModeToggle.checked);
-    let scanResult = scanFiles(readable, { placeholderMode });
+    let scanResult = scanFiles(readable, { placeholderMode, ruleOverrides: currentOverrides });
 
     // Reconcile against any findings the user previously ignored (see
     // storage.js's module comment): a finding whose value hasn't changed
@@ -275,6 +293,149 @@
   }
 
   refreshScanHistoryUI();
+
+  // -----------------------------------------------------------------------
+  // Rule editor (Phase 4)
+  // -----------------------------------------------------------------------
+
+  function renderRuleEditor() {
+    if (!keyPatternList || !allowlistList) return;
+    const base = getBaseRuleSnapshot();
+
+    let keyHtml = "";
+    base.keyPatternSources.forEach((p) => {
+      const disabled = currentOverrides.keyPatternsRemoved.includes(p);
+      keyHtml += `<div class="rule-editor-row${disabled ? " is-disabled" : ""}">
+        <span class="rule-editor-text">${escapeHtml(p)}</span>
+        <span class="rule-editor-tag">base</span>
+        <button class="rule-editor-toggle" data-kind="base" data-pattern="${escapeHtml(p)}">${disabled ? "Enable" : "Disable"}</button>
+      </div>`;
+    });
+    currentOverrides.keyPatternsAdded.forEach((p) => {
+      keyHtml += `<div class="rule-editor-row">
+        <span class="rule-editor-text">${escapeHtml(p)}</span>
+        <span class="rule-editor-tag rule-editor-tag-custom">custom</span>
+        <button class="rule-editor-toggle" data-kind="added" data-pattern="${escapeHtml(p)}">Remove</button>
+      </div>`;
+    });
+    keyPatternList.innerHTML = keyHtml;
+
+    let allowHtml = "";
+    base.placeholderAllowlist.forEach((v) => {
+      const disabled = currentOverrides.placeholderAllowlistRemoved.map((x) => x.toLowerCase()).includes(v.toLowerCase());
+      allowHtml += `<div class="rule-editor-row${disabled ? " is-disabled" : ""}">
+        <span class="rule-editor-text">${escapeHtml(v)}</span>
+        <span class="rule-editor-tag">base</span>
+        <button class="rule-editor-toggle" data-list="allowlist" data-kind="base" data-value="${escapeHtml(v)}">${disabled ? "Enable" : "Disable"}</button>
+      </div>`;
+    });
+    currentOverrides.placeholderAllowlistAdded.forEach((v) => {
+      allowHtml += `<div class="rule-editor-row">
+        <span class="rule-editor-text">${escapeHtml(v)}</span>
+        <span class="rule-editor-tag rule-editor-tag-custom">custom</span>
+        <button class="rule-editor-toggle" data-list="allowlist" data-kind="added" data-value="${escapeHtml(v)}">Remove</button>
+      </div>`;
+    });
+    allowlistList.innerHTML = allowHtml;
+  }
+
+  async function persistOverrides() {
+    const db = await getDb();
+    if (!db) return;
+    await ScannerStorage.saveRuleOverrides(db, currentOverrides);
+  }
+
+  async function loadRuleOverrides() {
+    const db = await getDb();
+    if (!db) {
+      renderRuleEditor();
+      return;
+    }
+    currentOverrides = await ScannerStorage.getRuleOverrides(db);
+    renderRuleEditor();
+  }
+
+  loadRuleOverrides();
+
+  if (addKeyPatternBtn) {
+    addKeyPatternBtn.addEventListener("click", async () => {
+      const raw = newKeyPatternInput.value.trim();
+      keyPatternError.textContent = "";
+      if (!raw) return;
+      try {
+        // eslint-disable-next-line no-new
+        new RegExp(raw, "gi"); // validate before accepting - never let an invalid pattern into the effective ruleset
+      } catch (e) {
+        keyPatternError.textContent = `Not a valid pattern: ${e.message}`;
+        return;
+      }
+      const base = getBaseRuleSnapshot();
+      if (base.keyPatternSources.includes(raw) || currentOverrides.keyPatternsAdded.includes(raw)) {
+        keyPatternError.textContent = "That pattern already exists.";
+        return;
+      }
+      currentOverrides.keyPatternsAdded.push(raw);
+      newKeyPatternInput.value = "";
+      await persistOverrides();
+      renderRuleEditor();
+    });
+  }
+
+  if (addAllowlistBtn) {
+    addAllowlistBtn.addEventListener("click", async () => {
+      const raw = newAllowlistInput.value.trim();
+      if (!raw) return;
+      currentOverrides.placeholderAllowlistAdded.push(raw);
+      newAllowlistInput.value = "";
+      await persistOverrides();
+      renderRuleEditor();
+    });
+  }
+
+  if (keyPatternList) {
+    keyPatternList.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".rule-editor-toggle");
+      if (!btn) return;
+      const pattern = btn.dataset.pattern;
+      if (btn.dataset.kind === "added") {
+        currentOverrides.keyPatternsAdded = currentOverrides.keyPatternsAdded.filter((p) => p !== pattern);
+      } else {
+        const isCurrentlyRemoved = currentOverrides.keyPatternsRemoved.includes(pattern);
+        currentOverrides.keyPatternsRemoved = isCurrentlyRemoved
+          ? currentOverrides.keyPatternsRemoved.filter((p) => p !== pattern)
+          : [...currentOverrides.keyPatternsRemoved, pattern];
+      }
+      await persistOverrides();
+      renderRuleEditor();
+    });
+  }
+
+  if (allowlistList) {
+    allowlistList.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".rule-editor-toggle");
+      if (!btn) return;
+      const value = btn.dataset.value;
+      if (btn.dataset.kind === "added") {
+        currentOverrides.placeholderAllowlistAdded = currentOverrides.placeholderAllowlistAdded.filter((v) => v !== value);
+      } else {
+        const isCurrentlyRemoved = currentOverrides.placeholderAllowlistRemoved.map((v) => v.toLowerCase()).includes(value.toLowerCase());
+        currentOverrides.placeholderAllowlistRemoved = isCurrentlyRemoved
+          ? currentOverrides.placeholderAllowlistRemoved.filter((v) => v.toLowerCase() !== value.toLowerCase())
+          : [...currentOverrides.placeholderAllowlistRemoved, value];
+      }
+      await persistOverrides();
+      renderRuleEditor();
+    });
+  }
+
+  if (resetRulesBtn) {
+    resetRulesBtn.addEventListener("click", async () => {
+      currentOverrides = { keyPatternsAdded: [], keyPatternsRemoved: [], placeholderAllowlistAdded: [], placeholderAllowlistRemoved: [] };
+      const db = await getDb();
+      if (db) await ScannerStorage.resetRuleOverrides(db);
+      renderRuleEditor();
+    });
+  }
 
   downloadBtn.addEventListener("click", async () => {
     downloadBtn.disabled = true;
