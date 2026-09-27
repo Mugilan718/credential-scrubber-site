@@ -296,7 +296,10 @@
       const when = new Date(h.timestamp).toLocaleString();
       const findingWord = h.findingCount === 1 ? "finding" : "findings";
       return `<div class="scan-history-row">
-        <span class="scan-history-date">${escapeHtml(when)}</span>
+        <span class="scan-history-left">
+          <svg class="icon scan-history-row-icon"><use href="#icon-clock"/></svg>
+          <span class="scan-history-date">${escapeHtml(when)}</span>
+        </span>
         <span class="scan-history-counts">${h.fileCount} files scanned · ${h.findingCount} ${findingWord}</span>
       </div>`;
     }).join("");

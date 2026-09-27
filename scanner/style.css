@@ -25,6 +25,25 @@ a { color: inherit; }
 
 .hidden { display: none !important; }
 
+/* ---------- Icons (shared sprite, see scanner/index.html's inline <symbol>s) ---------- */
+
+.icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  vertical-align: -0.15em;
+  flex-shrink: 0;
+}
+
+.icon-lg { width: 40px; height: 40px; }
+.icon-md { width: 22px; height: 22px; }
+
+.btn-glow .icon,
+.btn-ghost .icon {
+  margin-right: 6px;
+  vertical-align: -0.2em;
+}
+
 .topnav {
   display: flex;
   justify-content: space-between;
@@ -74,7 +93,13 @@ a { color: inherit; }
   background: rgba(0,229,199,0.05);
 }
 
-.drop-icon { font-size: 48px; margin-bottom: 16px; }
+.drop-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+  color: var(--glow-cyan);
+  filter: drop-shadow(0 0 14px rgba(0,229,199,0.45));
+}
 
 .drop-zone h1 {
   font-family: var(--display);
@@ -103,7 +128,10 @@ a { color: inherit; }
   font-size: 13.5px;
   color: var(--ink);
   cursor: pointer;
+  text-align: left;
 }
+
+.placeholder-toggle-icon { color: var(--glow-cyan); }
 
 .placeholder-toggle input[type="checkbox"] {
   accent-color: var(--glow-cyan);
@@ -300,7 +328,12 @@ a { color: inherit; }
   margin-bottom: 8px;
 }
 
+.panel-title-icon { color: var(--glow-cyan); margin-right: 2px; }
+
 .scan-history-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--display);
   font-size: 17px;
   margin: 0;
@@ -332,6 +365,8 @@ a { color: inherit; }
   font-size: 12.5px;
 }
 
+.scan-history-left { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.scan-history-row-icon { color: var(--glow-cyan); }
 .scan-history-date { color: var(--ink); }
 .scan-history-counts { color: var(--ink-soft); font-size: 11.5px; white-space: nowrap; }
 
@@ -354,10 +389,15 @@ a { color: inherit; }
 .rule-editor-group { margin-top: 20px; }
 
 .rule-editor-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--display);
   font-size: 14.5px;
   margin: 0 0 8px;
 }
+
+.rule-editor-group h3 .icon { color: var(--glow-cyan); }
 
 .rule-editor-hint {
   font-size: 12px;
@@ -454,6 +494,9 @@ a { color: inherit; }
 }
 
 .known-limitations-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--display);
   font-size: 17px;
   margin: 0 0 12px;

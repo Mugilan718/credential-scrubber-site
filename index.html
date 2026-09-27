@@ -19,6 +19,28 @@
 </head>
 <body>
 
+<!-- Shared icon sprite - hand-authored, stroke-based (24x24, currentColor),
+     no icon library/CDN dependency. Same set used on the scanner page. -->
+<svg style="display:none" aria-hidden="true">
+  <symbol id="icon-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.3 3.9 1.8 18.5A1.6 1.6 0 0 0 3.2 21h17.6a1.6 1.6 0 0 0 1.4-2.5L13.7 3.9a1.6 1.6 0 0 0-2.8 0z"/>
+    <path d="M12 9.5v4.2"/>
+    <path d="M12 17v.01"/>
+  </symbol>
+  <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9.3"/>
+    <path d="M8 12.3l2.7 2.7 5.3-6"/>
+  </symbol>
+  <symbol id="icon-cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 18a4.5 4.5 0 0 1-.4-9 5.5 5.5 0 0 1 10.7-1.6A4 4 0 0 1 17 18H7z"/>
+  </symbol>
+  <symbol id="icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 4v11"/>
+    <path d="M8 11l4 4 4-4"/>
+    <path d="M5 19h14"/>
+  </symbol>
+</svg>
+
 <nav class="topnav">
   <div class="topnav-brand">Credential Scrubber</div>
   <button class="nav-toggle" id="navToggle" type="button" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="navLinks">
@@ -200,19 +222,19 @@
     <div class="stakes-card stakes-bad">
       <h3>Without scanning first</h3>
       <ul>
-        <li>A pasted API key can be used by anyone who sees that conversation — including logs, screenshots, or shared chat histories</li>
-        <li>Cloud credentials (AWS, GCP, Azure) can rack up real charges in someone else's hands within hours</li>
-        <li>A leaked database password is an open door to every record inside it</li>
-        <li>Once shared, a secret can't be "un-shared" — rotating it after the fact is the only fix, and only if you notice in time</li>
+        <li><svg class="icon stakes-li-icon"><use href="#icon-alert"/></svg> A pasted API key can be used by anyone who sees that conversation — including logs, screenshots, or shared chat histories</li>
+        <li><svg class="icon stakes-li-icon"><use href="#icon-alert"/></svg> Cloud credentials (AWS, GCP, Azure) can rack up real charges in someone else's hands within hours</li>
+        <li><svg class="icon stakes-li-icon"><use href="#icon-alert"/></svg> A leaked database password is an open door to every record inside it</li>
+        <li><svg class="icon stakes-li-icon"><use href="#icon-alert"/></svg> Once shared, a secret can't be "un-shared" — rotating it after the fact is the only fix, and only if you notice in time</li>
       </ul>
     </div>
     <div class="stakes-card stakes-good">
       <h3>With Credential Scrubber</h3>
       <ul>
-        <li>Every hardcoded secret is found and masked before it ever leaves your machine</li>
-        <li>Works the same whether you're pasting into an AI chat, a support ticket, or a public repo</li>
-        <li>Nothing is uploaded, logged, or stored anywhere outside your own device</li>
-        <li>Free, open-source, and fast enough to run before every share — not just once a year</li>
+        <li><svg class="icon stakes-li-icon"><use href="#icon-check"/></svg> Every hardcoded secret is found and masked before it ever leaves your machine</li>
+        <li><svg class="icon stakes-li-icon"><use href="#icon-check"/></svg> Works the same whether you're pasting into an AI chat, a support ticket, or a public repo</li>
+        <li><svg class="icon stakes-li-icon"><use href="#icon-check"/></svg> Nothing is uploaded, logged, or stored anywhere outside your own device</li>
+        <li><svg class="icon stakes-li-icon"><use href="#icon-check"/></svg> Free, open-source, and fast enough to run before every share — not just once a year</li>
       </ul>
     </div>
   </div>
@@ -228,12 +250,12 @@
 
   <div class="how-grid">
     <div class="how-card">
-      <h3>Online — no install</h3>
+      <h3><svg class="icon icon-md how-card-icon"><use href="#icon-cloud"/></svg> Online — no install</h3>
       <p>Open it in your browser, drop in a folder, get a cleaned copy back. Everything happens on your own device using your browser's own file access — nothing is ever uploaded to a server, even though there's nothing to install.</p>
       <a href="scanner/index.html" class="link-arrow">Try it now</a>
     </div>
     <div class="how-card">
-      <h3>Downloadable app</h3>
+      <h3><svg class="icon icon-md how-card-icon"><use href="#icon-download"/></svg> Downloadable app</h3>
       <p>A full desktop app for Windows: manage multiple projects, track scan history over time, edit detection rules, and scan only what changed since your last commit.</p>
       <a href="#get-it" class="link-arrow">Download</a>
     </div>

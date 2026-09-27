@@ -27,6 +27,18 @@ h1, h2, h3 { font-family: var(--display); margin: 0; }
 
 a { color: inherit; text-decoration: none; }
 
+/* ---------- Icons (shared sprite, see index.html's inline <symbol>s) ---------- */
+
+.icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  vertical-align: -0.15em;
+  flex-shrink: 0;
+}
+
+.icon-md { width: 22px; height: 22px; }
+
 /* ---------- Nav ---------- */
 
 .topnav {
@@ -305,12 +317,29 @@ a { color: inherit; text-decoration: none; }
 
 .stakes-card ul {
   margin: 0;
-  padding-left: 20px;
+  padding-left: 0;
+  list-style: none;
   display: flex;
   flex-direction: column;
   gap: 12px;
   font-size: 14.5px;
 }
+
+.stakes-card li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.stakes-li-icon {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+  margin-top: 0.15em;
+}
+
+.stakes-bad .stakes-li-icon { color: #FF9B9B; }
+.stakes-good .stakes-li-icon { color: var(--glow-cyan); }
 
 .stakes-bad {
   background: linear-gradient(160deg, rgba(242,84,91,0.12), rgba(242,84,91,0.03));
@@ -348,9 +377,14 @@ a { color: inherit; text-decoration: none; }
 }
 
 .how-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-size: 20px;
   margin-bottom: 12px;
 }
+
+.how-card-icon { color: var(--glow-cyan); }
 
 .how-card p {
   color: var(--ink-soft);

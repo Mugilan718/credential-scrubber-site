@@ -18,6 +18,67 @@
 </head>
 <body>
 
+<!-- Shared icon sprite - hand-authored, stroke-based (24x24, currentColor),
+     no icon library/CDN dependency. Reused via <svg class="icon"><use href="#icon-name"/></svg>. -->
+<svg style="display:none" aria-hidden="true">
+  <symbol id="icon-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7a2 2 0 0 1 2-2h4.5l1.5 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+  </symbol>
+  <symbol id="icon-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="7" width="20" height="10" rx="5"/>
+    <circle cx="16" cy="12" r="3.2" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="icon-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="7.5" cy="15.5" r="4.5"/>
+    <path d="M11 12l8.5-8.5M16 7l2.5 2.5M13 10l2 2"/>
+  </symbol>
+  <symbol id="icon-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 2.5 4.5 5.5v5.5c0 5 3.2 8.5 7.5 10.5 4.3-2 7.5-5.5 7.5-10.5V5.5L12 2.5z"/>
+    <path d="M8.5 12l2.3 2.3L15.8 9"/>
+  </symbol>
+  <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9"/>
+    <path d="M12 7.5v5l3.2 2"/>
+  </symbol>
+  <symbol id="icon-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.3 3.9 1.8 18.5A1.6 1.6 0 0 0 3.2 21h17.6a1.6 1.6 0 0 0 1.4-2.5L13.7 3.9a1.6 1.6 0 0 0-2.8 0z"/>
+    <path d="M12 9.5v4.2"/>
+    <path d="M12 17v.01"/>
+  </symbol>
+  <symbol id="icon-bookmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6.5 3h11a1 1 0 0 1 1 1v16.2l-6.5-3.7-6.5 3.7V4a1 1 0 0 1 1-1z"/>
+  </symbol>
+  <symbol id="icon-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7h16M4 12h16M4 17h16"/>
+    <circle cx="9" cy="7" r="2.1" fill="currentColor" stroke="none"/>
+    <circle cx="16" cy="12" r="2.1" fill="currentColor" stroke="none"/>
+    <circle cx="7" cy="17" r="2.1" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7h16"/>
+    <path d="M9.5 7V4.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V7"/>
+    <path d="M6.5 7l1 12.2a1 1 0 0 0 1 .9h6.9a1 1 0 0 0 1-.9L17.5 7"/>
+  </symbol>
+  <symbol id="icon-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 5v14M5 12h14"/>
+  </symbol>
+  <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9.3"/>
+    <path d="M8 12.3l2.7 2.7 5.3-6"/>
+  </symbol>
+  <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6 6 18M6 6l12 12"/>
+  </symbol>
+  <symbol id="icon-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9.5 14.5 14.5 9.5"/>
+    <path d="M11 7l1.5-1.5a3.5 3.5 0 0 1 5 5L16 12"/>
+    <path d="M13 17l-1.5 1.5a3.5 3.5 0 0 1-5-5L8 12"/>
+  </symbol>
+  <symbol id="icon-hash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 9h14M5 15h14M10 4l-2.5 16M16 4l-2.5 16"/>
+  </symbol>
+</svg>
+
 <nav class="topnav">
   <a href="../index.html" class="topnav-brand">Credential Scrubber</a>
   <div class="topnav-links">
@@ -28,7 +89,7 @@
 <main class="scanner-main">
 
   <div id="dropZone" class="drop-zone">
-    <div class="drop-icon">📁</div>
+    <div class="drop-icon"><svg class="icon icon-lg"><use href="#icon-folder"/></svg></div>
     <h1>Drop a project folder here</h1>
     <p>Or click to choose one. Scanning happens entirely on your device — nothing is sent anywhere, ever.</p>
     <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
@@ -37,17 +98,18 @@
 
     <label class="placeholder-toggle" for="placeholderModeToggle">
       <input type="checkbox" id="placeholderModeToggle" />
-      Use typed placeholders (like <code>&lt;PASSWORD_1&gt;</code>) instead of one shared mask
+      <svg class="icon icon-md placeholder-toggle-icon"><use href="#icon-toggle"/></svg>
+      <span>Use typed placeholders (like <code>&lt;PASSWORD_1&gt;</code>) instead of one shared mask</span>
     </label>
     <p class="placeholder-toggle-note">Keeps track of whether two values are the same secret or two different ones — useful if you're about to hand the result to an AI. Leave unchecked for the default: every finding replaced with the same <code>***REDACTED***</code>.</p>
 
     <div id="rememberedFolderArea" class="remembered-folder-area hidden">
-      <button class="btn-glow" id="scanRememberedFolderBtn">Scan remembered folder: <span id="rememberedFolderName"></span></button>
-      <button class="btn-ghost btn-small" id="forgetFolderBtn">Forget this folder</button>
+      <button class="btn-glow" id="scanRememberedFolderBtn"><svg class="icon"><use href="#icon-bookmark"/></svg> Scan remembered folder: <span id="rememberedFolderName"></span></button>
+      <button class="btn-ghost btn-small" id="forgetFolderBtn"><svg class="icon"><use href="#icon-trash"/></svg> Forget this folder</button>
     </div>
 
     <div id="fsAccessArea" class="fs-access-area hidden">
-      <button class="btn-ghost btn-small" id="pickRememberedFolderBtn">Remember a folder for next time</button>
+      <button class="btn-ghost btn-small" id="pickRememberedFolderBtn"><svg class="icon"><use href="#icon-bookmark"/></svg> Remember a folder for next time</button>
       <p class="fs-access-note">Available in Chrome/Edge. Grants this site access to a folder you choose so you don't have to re-select it on your next visit — revoke it anytime in your browser's site settings. Not available in this browser? The drag-and-drop/"Choose folder" option above always works the same either way.</p>
     </div>
   </div>
@@ -71,8 +133,8 @@
 
   <section id="scanHistoryPanel" class="scan-history-panel">
     <div class="scan-history-header">
-      <h2>Scan history</h2>
-      <button class="btn-ghost btn-small" id="clearHistoryBtn">Clear history</button>
+      <h2><svg class="icon icon-md panel-title-icon"><use href="#icon-clock"/></svg> Scan history</h2>
+      <button class="btn-ghost btn-small" id="clearHistoryBtn"><svg class="icon"><use href="#icon-trash"/></svg> Clear history</button>
     </div>
     <p class="local-only-note">Stored locally in this one browser, on this one device, only. It never syncs anywhere and is lost if you clear this site's browser data. The same applies to any finding you ignore: only a one-way hash of the value is kept — never the value itself — so a changed value always reappears, flagged, rather than staying silently hidden.</p>
     <div id="scanHistoryList" class="scan-history-list">
@@ -82,34 +144,34 @@
 
   <section id="ruleEditorPanel" class="rule-editor-panel">
     <div class="scan-history-header">
-      <h2>Rule editor</h2>
+      <h2><svg class="icon icon-md panel-title-icon"><use href="#icon-sliders"/></svg> Rule editor</h2>
       <button class="btn-ghost btn-small" id="resetRulesBtn">Reset to defaults</button>
     </div>
     <p class="local-only-note">Edits here apply only to scans in this browser, layered on top of the shared detection rules — they never modify the underlying rule set itself, and other visitors (or your own other devices) are never affected. Stored locally, same as scan history above.</p>
 
     <div class="rule-editor-group">
-      <h3>Key patterns</h3>
+      <h3><svg class="icon"><use href="#icon-key"/></svg> Key patterns</h3>
       <div class="rule-editor-add">
         <input type="text" id="newKeyPatternInput" placeholder="e.g. internal_token or my[_-]?custom[_-]?key" />
-        <button class="btn-ghost btn-small" id="addKeyPatternBtn">Add</button>
+        <button class="btn-ghost btn-small" id="addKeyPatternBtn"><svg class="icon"><use href="#icon-plus"/></svg> Add</button>
       </div>
       <p class="rule-editor-error" id="keyPatternError"></p>
       <div class="rule-editor-list" id="keyPatternList"></div>
     </div>
 
     <div class="rule-editor-group">
-      <h3>Placeholder allow-list</h3>
+      <h3><svg class="icon"><use href="#icon-shield"/></svg> Placeholder allow-list</h3>
       <p class="rule-editor-hint">Values that look like secrets but aren't (matched whole, case-insensitive) — anything here is never flagged even if it would otherwise look suspicious.</p>
       <div class="rule-editor-add">
         <input type="text" id="newAllowlistInput" placeholder="e.g. myteamsharedtoken" />
-        <button class="btn-ghost btn-small" id="addAllowlistBtn">Add</button>
+        <button class="btn-ghost btn-small" id="addAllowlistBtn"><svg class="icon"><use href="#icon-plus"/></svg> Add</button>
       </div>
       <div class="rule-editor-list" id="allowlistList"></div>
     </div>
   </section>
 
   <section class="known-limitations-panel">
-    <h2>Known limitations</h2>
+    <h2><svg class="icon icon-md panel-title-icon"><use href="#icon-alert"/></svg> Known limitations</h2>
     <ul class="known-limitations-list">
       <li>No git-diff/changed-files scanning here — every scan is a full pass over whatever folder you give it. (The downloadable desktop app has a git changed-files mode.)</li>
       <li>An unquoted YAML value's mask isn't force-quoted the way the desktop app does it. A bare <code>*</code> is YAML's alias syntax, so redacting an unquoted YAML scalar can, in rare cases, produce invalid YAML.</li>
