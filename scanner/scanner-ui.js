@@ -280,6 +280,16 @@
     );
     lastSanitizedFiles = reconciled.sanitizedFiles;
     lastReportEntries = reconciled.reportEntries;
+
+    // Fade the row out before re-rendering without it, rather than an
+    // instant cut - a no-op visually for prefers-reduced-motion (the
+    // animation is disabled globally, so this timeout is the only delay,
+    // matching what CSS would have taken anyway).
+    const row = btn.closest(".result-row");
+    if (row) {
+      row.classList.add("ignoring");
+      await new Promise((r) => setTimeout(r, 220));
+    }
     renderResults(lastFilesScanned, lastReportEntries);
   });
 

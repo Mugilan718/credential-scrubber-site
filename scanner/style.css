@@ -201,7 +201,10 @@ a { color: inherit; }
   border: none;
   cursor: pointer;
   box-shadow: 0 0 24px rgba(0,229,199,0.3);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+.btn-glow:hover { transform: translateY(-1px); box-shadow: 0 0 36px rgba(0,229,199,0.48); }
+.btn-glow:active { transform: translateY(0); }
 
 .btn-ghost {
   padding: 13px 24px;
@@ -213,7 +216,9 @@ a { color: inherit; }
   color: var(--ink);
   cursor: pointer;
   margin-left: 12px;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
+.btn-ghost:hover { border-color: var(--glow-cyan); color: var(--ink); background: rgba(0,229,199,0.06); }
 
 /* ---------- Scanning state ---------- */
 
@@ -570,4 +575,40 @@ a { color: inherit; }
   .result-row { grid-template-columns: 32px 1fr 70px 60px; }
   .result-key { display: none; }
   .scan-history-row { flex-direction: column; align-items: flex-start; gap: 2px; }
+}
+
+/* ---------- Micro-interactions ---------- */
+
+@keyframes panelFadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+#dropZone:not(.hidden),
+#scanningState:not(.hidden),
+#resultsState:not(.hidden) {
+  animation: panelFadeIn 0.35s ease;
+}
+
+@keyframes rowIgnoreFade {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.97); }
+}
+
+.result-row.ignoring {
+  animation: rowIgnoreFade 0.22s ease forwards;
+  pointer-events: none;
+}
+
+.result-row { transition: background-color 0.15s ease; }
+
+@keyframes badgePop {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.results-summary strong { animation: badgePop 0.3s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
 }
