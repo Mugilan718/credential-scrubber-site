@@ -14,6 +14,10 @@
  *   scanMultilinePlus() below. Matches the desktop app's coverage exactly:
  *   Go is not covered (same known limitation as engine.py), and neither
  *   is a multi-line JS/TS template literal.
+ * - placeholder mode: an opt-in alternative to the shared MASK where every
+ *   finding instead gets a deterministic, typed placeholder like
+ *   <PASSWORD_1>/<API_KEY_1> - see PlaceholderRegistry and scanFiles()'s
+ *   `options.placeholderMode` below.
  */
 
 const MASK = "***REDACTED***";
@@ -146,6 +150,167 @@ const PLACEHOLDER_ALLOWLIST = new Set(
   (SHARED_RULES && SHARED_RULES.placeholder_allowlist) || FALLBACK_PLACEHOLDER_ALLOWLIST
 );
 
+// ---------------------------------------------------------------------
+// Placeholder mode - ported from engine.py's PlaceholderRegistry /
+// category_for_*() / _most_specific_category(). Opt-in alternative to the
+// shared MASK: every function below accepts an optional `registry`
+// (a PlaceholderRegistry instance) as its last parameter - null/omitted
+// means exactly today's MASK behavior, unchanged byte-for-byte.
+// ---------------------------------------------------------------------
+
+const DEFAULT_CATEGORY = "GENERIC_SECRET";
+
+// Keyed by the exact raw key_pattern string, mirroring engine.py's
+// KEY_PATTERN_CATEGORY. A pattern not listed here (e.g. a future addition
+// to rules_default.yaml not yet mapped) falls back to DEFAULT_CATEGORY
+// rather than throwing - this table is an aid, not a schema.
+const KEY_PATTERN_CATEGORY = {
+  "password": "PASSWORD", "passwd": "PASSWORD", "pwd": "PASSWORD",
+  "secret": "GENERIC_SECRET", "token": "ACCESS_TOKEN",
+  "api[_-]?key": "API_KEY", "apikey": "API_KEY", "access[_-]?key": "API_KEY",
+  "private[_-]?key": "PRIVATE_KEY", "client[_-]?secret": "API_KEY",
+  "auth": "ACCESS_TOKEN", "credential": "GENERIC_SECRET",
+  "connection[_-]?string": "CONNECTION_STRING", "conn[_-]?str": "CONNECTION_STRING",
+  "jdbc": "CONNECTION_STRING", "datasource\\.url": "URL", "db\\.url": "URL",
+  "db\\.host": "URL", "db\\.password": "PASSWORD", "db\\.username": "GENERIC_SECRET",
+  "host": "URL", "hostname": "URL", "ip[_-]?address": "URL", "endpoint": "URL",
+  "url": "URL", "uri": "URL", "ssn": "GENERIC_SECRET",
+  "encryption[_-]?key": "PRIVATE_KEY", "signing[_-]?key": "PRIVATE_KEY",
+  "session[_-]?key": "GENERIC_SECRET", "cert": "GENERIC_SECRET",
+  "keystore": "GENERIC_SECRET", "truststore": "GENERIC_SECRET",
+};
+
+// Keyed by value_pattern name; "high_entropy" is the synthetic reason
+// string used when only the entropy heuristic fired (not a real
+// value_pattern), included here for the same lookup.
+const VALUE_PATTERN_CATEGORY = {
+  "ipv4_address": "URL", "ipv6_address": "URL", "url_with_credentials": "URL",
+  "generic_url": "URL", "aws_access_key_id": "API_KEY",
+  "aws_secret_key_assignment": "API_KEY", "github_token": "ACCESS_TOKEN",
+  "slack_token": "ACCESS_TOKEN", "jwt_token": "ACCESS_TOKEN",
+  "bearer_token": "ACCESS_TOKEN", "private_key_block": "PRIVATE_KEY",
+  "email_address": "GENERIC_SECRET", "high_entropy": "GENERIC_SECRET",
+};
+
+// Keyed by the suspicious keyword found in a code_pattern's matched
+// variable/field name - see extractCodeKeyword(). Checked in this specific
+// order (most-specific first) so e.g. "apiKey" resolves via "apikey"
+// (API_KEY) rather than falling through to the more generic bare "key"
+// (GENERIC_SECRET), since "apikey" itself contains "key" as a substring.
+const CODE_KEYWORD_ORDER = ["password", "apikey", "api_key", "credential", "auth", "secret", "token", "key"];
+const CODE_KEYWORD_CATEGORY = {
+  "password": "PASSWORD", "secret": "GENERIC_SECRET", "token": "ACCESS_TOKEN",
+  "apikey": "API_KEY", "api_key": "API_KEY", "key": "GENERIC_SECRET",
+  "credential": "GENERIC_SECRET", "auth": "ACCESS_TOKEN",
+};
+
+function categoryForKeyPattern(source) {
+  return KEY_PATTERN_CATEGORY[source] || DEFAULT_CATEGORY;
+}
+function categoryForValuePattern(name) {
+  return VALUE_PATTERN_CATEGORY[name] || DEFAULT_CATEGORY;
+}
+function extractCodeKeyword(text) {
+  const lower = text.toLowerCase();
+  for (const kw of CODE_KEYWORD_ORDER) {
+    if (lower.includes(kw)) return kw;
+  }
+  return null;
+}
+function categoryForCodeKeyword(keyword) {
+  if (!keyword) return DEFAULT_CATEGORY;
+  return CODE_KEYWORD_CATEGORY[keyword.toLowerCase()] || DEFAULT_CATEGORY;
+}
+
+// Some keys match more than one key_pattern (e.g. "client_secret" matches
+// both the bare "secret" pattern and the more specific "client[_-]?secret"
+// one) - prefer whichever matched pattern maps to a named category over one
+// that only falls back to DEFAULT_CATEGORY, so a generic pattern appearing
+// earlier in the list doesn't shadow a more specific one appearing later.
+function mostSpecificCategory(categories) {
+  let fallback = DEFAULT_CATEGORY;
+  for (const c of categories) {
+    if (c !== DEFAULT_CATEGORY) return c;
+    fallback = c;
+  }
+  return fallback;
+}
+
+// Strip one matching pair of surrounding quote characters, if any, so the
+// same underlying value is recognized as identical for placeholder
+// correlation regardless of which quote style (or none) it happens to be
+// written with (e.g. "PF001" and 'PF001' must correlate). Mirrors
+// engine.py's _normalize_value_for_identity().
+function normalizeValueForIdentity(value) {
+  const v = value.replace(/\s+$/, "");
+  if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) {
+    return v.slice(1, -1);
+  }
+  return v;
+}
+
+const PLACEHOLDER_SHAPE = /<[A-Z_]+_\d+>/;
+
+// True if `text` contains a marker a previous pass already inserted - MASK
+// always, plus (only when placeholder mode is active) anything shaped like
+// a typed placeholder token - so a later pass doesn't try to re-redact text
+// an earlier pass on the same line already replaced. Mirrors engine.py's
+// _already_redacted().
+function alreadyRedactedText(text, registry) {
+  if (text.includes(MASK)) return true;
+  if (registry && PLACEHOLDER_SHAPE.test(text)) return true;
+  return false;
+}
+
+/**
+ * Deterministic, typed placeholder assignment for exactly one scanFiles()
+ * call. Maps (category, exact_value) -> a stable "<CATEGORY_N>" token, with
+ * a separate ordinal counter per category. Two different real values in
+ * the same category never collide on one placeholder; the same real value
+ * under a different key/variable name (or in a different file within the
+ * same scan) always gets the same one.
+ *
+ * Security: this map is exactly as sensitive as the secrets it indexes. It
+ * is never persisted, never logged, and exists only in memory for the
+ * lifetime of the scanFiles() call that created it, then is discarded with
+ * it. The placeholder text itself is built only from a fixed category name
+ * and an integer - never from any character of the original value - so it
+ * cannot leak the secret's content, length, prefix, suffix, or provider
+ * even if the placeholder text itself were ever exposed. Mirrors
+ * engine.py's PlaceholderRegistry exactly.
+ */
+class PlaceholderRegistry {
+  constructor() {
+    this._map = new Map();
+    this._counters = new Map();
+  }
+  getOrCreate(category, value) {
+    const key = `${category}\u0000${value}`;
+    let token = this._map.get(key);
+    if (token === undefined) {
+      const n = (this._counters.get(category) || 0) + 1;
+      this._counters.set(category, n);
+      token = `<${category}_${n}>`;
+      this._map.set(key, token);
+    }
+    return token;
+  }
+}
+
+// One replacement string per multiline fragment, in order. MASK mode
+// (registry is null - today's exact, unchanged default): every fragment
+// individually gets MASK. Placeholder mode: the whole reconstructed value
+// is one entity, so it gets exactly one placeholder - assigned to the
+// FIRST fragment - with every later fragment's span emptied, rather than
+// each fragment getting its own (misleadingly implying separate secrets).
+function multilineReplacements(registry, category, joined, fragmentCount) {
+  if (registry) {
+    const full = registry.getOrCreate(category, joined);
+    return [full, ...Array(fragmentCount - 1).fill("")];
+  }
+  return Array(fragmentCount).fill(MASK);
+}
+
 function isPlaceholder(value) {
   const v = value.trim().replace(/^["']|["']$/g, "").toLowerCase();
   return PLACEHOLDER_ALLOWLIST.has(v);
@@ -179,16 +344,19 @@ function findKeyValue(line) {
   return [m[1], m[2]];
 }
 
-function redactConfigLine(line, lineNo, filename, reportEntries) {
+function redactConfigLine(line, lineNo, filename, reportEntries, registry = null) {
   const [key, value] = findKeyValue(line);
-  if (key === null) return redactValuePatternsOnly(line, lineNo, filename, reportEntries);
+  if (key === null) return redactValuePatternsOnly(line, lineNo, filename, reportEntries, registry);
   if (value.trim() === "") return line;
 
-  const keyMatched = KEY_PATTERN_SOURCES.some((src) => keyPatternMatchesStrict(src, key));
+  const matchedPatterns = KEY_PATTERN_SOURCES.filter((src) => keyPatternMatchesStrict(src, key));
 
-  if (keyMatched) {
-    reportEntries.push({ file: filename, line: lineNo, key, rule: "key_name_match", before: value, after: MASK });
-    return line.includes(value) ? line.replace(value, MASK) : `${key}=${MASK}`;
+  if (matchedPatterns.length > 0) {
+    const replacement = registry
+      ? registry.getOrCreate(mostSpecificCategory(matchedPatterns.map(categoryForKeyPattern)), normalizeValueForIdentity(value))
+      : MASK;
+    reportEntries.push({ file: filename, line: lineNo, key, rule: "key_name_match", before: value, after: replacement });
+    return line.includes(value) ? line.replace(value, replacement) : `${key}=${replacement}`;
   }
 
   if (isPlaceholder(value)) return line;
@@ -201,27 +369,31 @@ function redactConfigLine(line, lineNo, filename, reportEntries) {
 
   if (valueMatchedName || entropyFlag) {
     const reason = valueMatchedName || "high_entropy";
-    reportEntries.push({ file: filename, line: lineNo, key, rule: reason, before: value, after: MASK });
-    return line.includes(value) ? line.replace(value, MASK) : `${key}=${MASK}`;
+    const replacement = registry
+      ? registry.getOrCreate(categoryForValuePattern(reason), normalizeValueForIdentity(value))
+      : MASK;
+    reportEntries.push({ file: filename, line: lineNo, key, rule: reason, before: value, after: replacement });
+    return line.includes(value) ? line.replace(value, replacement) : `${key}=${replacement}`;
   }
 
   return line;
 }
 
-function redactValuePatternsOnly(line, lineNo, filename, reportEntries) {
+function redactValuePatternsOnly(line, lineNo, filename, reportEntries, registry = null) {
   let modified = line;
   for (const [name, pattern] of VALUE_PATTERNS) {
     const m = modified.match(pattern);
     if (m) {
       if (isPlaceholder(m[0])) continue;
-      reportEntries.push({ file: filename, line: lineNo, key: null, rule: name, before: m[0], after: MASK });
-      modified = modified.replace(pattern, MASK);
+      const replacement = registry ? registry.getOrCreate(categoryForValuePattern(name), m[0]) : MASK;
+      reportEntries.push({ file: filename, line: lineNo, key: null, rule: name, before: m[0], after: replacement });
+      modified = modified.replace(pattern, replacement);
     }
   }
   return modified;
 }
 
-function redactCodeLine(line, lang, lineNo, filename, reportEntries) {
+function redactCodeLine(line, lang, lineNo, filename, reportEntries, registry = null) {
   let modified = line;
   const patterns = CODE_PATTERNS[lang] || [];
 
@@ -230,17 +402,25 @@ function redactCodeLine(line, lang, lineNo, filename, reportEntries) {
     if (m && m[1] !== undefined && m[1].trim() !== "") {
       const literalValue = m[1];
       const start = m.index + m[0].indexOf(m[1]);
-      modified = modified.slice(0, start) + MASK + modified.slice(start + literalValue.length);
-      reportEntries.push({ file: filename, line: lineNo, key: "code_literal", rule: "code_variable_pattern", before: literalValue, after: MASK });
+      let replacement;
+      if (registry) {
+        const precedingText = m[0].slice(0, m[0].indexOf(m[1]));
+        replacement = registry.getOrCreate(categoryForCodeKeyword(extractCodeKeyword(precedingText)), literalValue);
+      } else {
+        replacement = MASK;
+      }
+      modified = modified.slice(0, start) + replacement + modified.slice(start + literalValue.length);
+      reportEntries.push({ file: filename, line: lineNo, key: "code_literal", rule: "code_variable_pattern", before: literalValue, after: replacement });
     }
   }
 
   for (const [name, pattern] of VALUE_PATTERNS) {
     const m = modified.match(pattern);
-    if (m && !modified.slice(m.index, m.index + m[0].length).includes(MASK)) {
+    if (m && !alreadyRedactedText(modified.slice(m.index, m.index + m[0].length), registry)) {
       if (isPlaceholder(m[0])) continue;
-      reportEntries.push({ file: filename, line: lineNo, key: null, rule: name, before: m[0], after: MASK });
-      modified = modified.replace(pattern, MASK);
+      const replacement = registry ? registry.getOrCreate(categoryForValuePattern(name), m[0]) : MASK;
+      reportEntries.push({ file: filename, line: lineNo, key: null, rule: name, before: m[0], after: replacement });
+      modified = modified.replace(pattern, replacement);
     }
   }
 
@@ -305,16 +485,28 @@ function keyPatternMatchesCamel(source, text) {
   return false;
 }
 
+// The list of every matching key pattern (possibly empty), for callers
+// that need to resolve a placeholder category via categoryForKeyPattern(),
+// preferring the most specific match when more than one matches - see
+// mostSpecificCategory(). findKeyMatches() below stays a plain boolean for
+// existing boolean-context callers (an empty ARRAY is truthy in
+// JavaScript, unlike Python, so this distinction matters here).
+function matchedKeyPatterns(name) {
+  return KEY_PATTERN_SOURCES.filter((src) => keyPatternMatchesCamel(src, name));
+}
+
 function findKeyMatches(name) {
-  return KEY_PATTERN_SOURCES.some((src) => keyPatternMatchesCamel(src, name));
+  return matchedKeyPatterns(name).length > 0;
 }
 
 // Shared tail-end of both multiline scanners below: given the reconstructed
 // value and where its fragments live, decide whether to redact and, if so,
-// mask each fragment's quoted span in place and record one report entry per
-// fragment - mirrors engine.py's shared key_hit/value_hit/entropy_hit gate.
-function maybeRedactMultiline(varName, joined, fragIndices, fragments, lines, filename, reportEntries) {
-  const keyHit = findKeyMatches(varName);
+// mask (or placeholder-ize) each fragment's quoted span in place and record
+// one report entry per fragment - mirrors engine.py's shared
+// key_hit/value_hit/entropy_hit gate.
+function maybeRedactMultiline(varName, joined, fragIndices, fragments, lines, filename, reportEntries, registry = null) {
+  const keyMatches = matchedKeyPatterns(varName);
+  const keyHit = keyMatches.length > 0;
   let valueHit = null;
   for (const [name, pattern] of VALUE_PATTERNS) {
     if (pattern.test(joined)) { valueHit = name; break; }
@@ -325,15 +517,21 @@ function maybeRedactMultiline(varName, joined, fragIndices, fragments, lines, fi
 
   const reason = keyHit ? "key_name_match" : (valueHit || "high_entropy");
   const rule = `multiline_concat_${reason}`;
+  const category = keyHit
+    ? mostSpecificCategory(keyMatches.map(categoryForKeyPattern))
+    : categoryForValuePattern(valueHit || "high_entropy");
+  const replacements = multilineReplacements(registry, category, joined, fragments.length);
+
   fragIndices.forEach((idx, k) => {
     const frag = fragments[k];
-    lines[idx] = lines[idx].replace(/(["'])[^"']*\1/, (whole, q) => q + MASK + q);
-    reportEntries.push({ file: filename, line: idx + 1, key: varName, rule, before: frag, after: MASK });
+    const replacement = replacements[k];
+    lines[idx] = lines[idx].replace(/(["'])[^"']*\1/, (whole, q) => q + replacement + q);
+    reportEntries.push({ file: filename, line: idx + 1, key: varName, rule, before: frag, after: replacement });
   });
 }
 
 /** Detect and redact `var = (\n "frag" \n "frag" \n)` across physical lines. */
-function scanMultilinePython(lines, filename, reportEntries) {
+function scanMultilinePython(lines, filename, reportEntries, registry = null) {
   const n = lines.length;
   let i = 0;
   while (i < n) {
@@ -351,7 +549,7 @@ function scanMultilinePython(lines, filename, reportEntries) {
       }
       if (j < n && PY_CLOSE.test(lines[j]) && fragments.length > 0) {
         const joined = fragments.join("");
-        maybeRedactMultiline(varName, joined, fragIndices, fragments, lines, filename, reportEntries);
+        maybeRedactMultiline(varName, joined, fragIndices, fragments, lines, filename, reportEntries, registry);
       }
     }
     i++;
@@ -367,7 +565,7 @@ function scanMultilinePython(lines, filename, reportEntries) {
  * Only redacts if the chain is properly terminated with ';' - a chain that
  * trails off without a terminator is left untouched rather than guessed at.
  */
-function scanMultilinePlus(lines, filename, reportEntries) {
+function scanMultilinePlus(lines, filename, reportEntries, registry = null) {
   const n = lines.length;
   let i = 0;
   while (i < n) {
@@ -404,7 +602,7 @@ function scanMultilinePlus(lines, filename, reportEntries) {
 
       if (fragments.length > 1 && terminated) {
         const joined = fragments.join("");
-        maybeRedactMultiline(varName, joined, fragIndices, fragments, lines, filename, reportEntries);
+        maybeRedactMultiline(varName, joined, fragIndices, fragments, lines, filename, reportEntries, registry);
       }
     }
     i++;
@@ -423,11 +621,20 @@ function classifyFile(path) {
 
 /**
  * Scan a list of {path, content} file objects entirely in-memory.
+ * `options.placeholderMode`: opt-in, defaults to false/undefined - false
+ * preserves today's behavior exactly (every finding masked with the shared
+ * MASK constant). true redacts with deterministic, typed placeholders
+ * instead, via one PlaceholderRegistry shared across every file in this
+ * one call - the same real value, detected as the same category, always
+ * gets the same "<CATEGORY_N>" token anywhere in this one scan; different
+ * values never collide on one token. The registry lives only for the
+ * duration of this function call and is never returned or persisted.
  * Returns { sanitizedFiles: [{path, content}], reportEntries: [...] }
  */
-function scanFiles(files) {
+function scanFiles(files, options = {}) {
   const reportEntries = [];
   const sanitizedFiles = [];
+  const registry = options.placeholderMode ? new PlaceholderRegistry() : null;
 
   for (const file of files) {
     const parts = file.path.split("/");
@@ -437,23 +644,23 @@ function scanFiles(files) {
     const lines = file.content.split(/\r?\n/);
 
     if (classification === "config") {
-      const out = lines.map((l, i) => redactConfigLine(l, i + 1, file.path, reportEntries));
+      const out = lines.map((l, i) => redactConfigLine(l, i + 1, file.path, reportEntries, registry));
       sanitizedFiles.push({ path: file.path, content: out.join("\n") });
     } else if (classification && classification.startsWith("code:")) {
       const lang = classification.split(":")[1];
       if (lang === "python") {
-        scanMultilinePython(lines, file.path, reportEntries);
+        scanMultilinePython(lines, file.path, reportEntries, registry);
       }
       if (PLUS_CONCAT_LANGS.has(lang)) {
-        scanMultilinePlus(lines, file.path, reportEntries);
+        scanMultilinePlus(lines, file.path, reportEntries, registry);
       }
       const out = lines.map((l, i) => {
-        if (l.includes(MASK)) return l; // already redacted by a multiline pass above - don't double-process
-        return redactCodeLine(l, lang, i + 1, file.path, reportEntries);
+        if (alreadyRedactedText(l, registry)) return l; // already redacted by a multiline pass above - don't double-process
+        return redactCodeLine(l, lang, i + 1, file.path, reportEntries, registry);
       });
       sanitizedFiles.push({ path: file.path, content: out.join("\n") });
     } else if (classification === null && isLikelyTextFile(file.path)) {
-      const out = lines.map((l, i) => redactValuePatternsOnly(l, i + 1, file.path, reportEntries));
+      const out = lines.map((l, i) => redactValuePatternsOnly(l, i + 1, file.path, reportEntries, registry));
       sanitizedFiles.push({ path: file.path, content: out.join("\n") });
     } else {
       sanitizedFiles.push({ path: file.path, content: file.content, binary: true });
@@ -474,5 +681,7 @@ if (typeof module !== "undefined") {
     scanFiles, MASK,
     scanMultilinePython, scanMultilinePlus, findKeyMatches,
     redactConfigLine, redactCodeLine, redactValuePatternsOnly,
+    PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
+    categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
   };
 }

@@ -10,6 +10,7 @@
   const resultsTable = document.getElementById("resultsTable");
   const downloadBtn = document.getElementById("downloadBtn");
   const startOverBtn = document.getElementById("startOverBtn");
+  const placeholderModeToggle = document.getElementById("placeholderModeToggle");
 
   let lastSanitizedFiles = [];
 
@@ -23,7 +24,12 @@
 
   chooseBtn.addEventListener("click", () => folderInput.click());
   dropZone.addEventListener("click", (e) => {
-    if (e.target !== chooseBtn) folderInput.click();
+    if (e.target === chooseBtn) return;
+    // Don't hijack a click on the placeholder-mode toggle (or its label
+    // text) into opening the folder picker - only the empty drop area and
+    // its instructional text should do that.
+    if (e.target.closest(".placeholder-toggle")) return;
+    folderInput.click();
   });
 
   folderInput.addEventListener("change", (e) => {
@@ -106,7 +112,8 @@
     // (synchronous, potentially CPU-heavy) scan runs.
     await new Promise((r) => setTimeout(r, 30));
 
-    const { sanitizedFiles, reportEntries } = scanFiles(readable);
+    const placeholderMode = !!(placeholderModeToggle && placeholderModeToggle.checked);
+    const { sanitizedFiles, reportEntries } = scanFiles(readable, { placeholderMode });
     lastSanitizedFiles = sanitizedFiles;
 
     // Also carry through skipped (binary/oversized) files into the zip, untouched,

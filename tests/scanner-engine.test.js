@@ -14,6 +14,8 @@ const {
   scanFiles, MASK,
   scanMultilinePython, scanMultilinePlus, findKeyMatches,
   redactConfigLine, redactCodeLine, redactValuePatternsOnly,
+  PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
+  categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
 } = require(path.join(__dirname, "..", "scanner-engine.js"));
 
 let passed = 0;
@@ -368,6 +370,241 @@ test("bonus coverage gained from data-driven code_patterns: Python os.getenv(...
   const out = redactCodeLine('DB_PASSWORD = os.getenv("DB_PASSWORD", "fake-PlainOldPassword1")', "python", 1, "f.py", entries);
   assert.ok(!out.includes("fake-PlainOldPassword1"), "the hardcoded fallback default should be masked");
   assert.ok(entries.length >= 1);
+});
+
+// -----------------------------------------------------------------------
+// PHASE 2 - placeholder mode (typed, numbered placeholders)
+// -----------------------------------------------------------------------
+
+console.log("\nPlaceholderRegistry - determinism and distinctness (mirrors test_placeholders.py):");
+
+test("same value + same category gives the same placeholder", () => {
+  const reg = new PlaceholderRegistry();
+  const a = reg.getOrCreate("PASSWORD", "fakeSecret123");
+  const b = reg.getOrCreate("PASSWORD", "fakeSecret123");
+  assert.strictEqual(a, b);
+});
+
+test("different values in the same category give different placeholders", () => {
+  const reg = new PlaceholderRegistry();
+  const a = reg.getOrCreate("API_KEY", "keyOne");
+  const b = reg.getOrCreate("API_KEY", "keyTwo");
+  assert.notStrictEqual(a, b);
+});
+
+test("repeated value (3+ times) all correlate to the same token", () => {
+  const reg = new PlaceholderRegistry();
+  const first = reg.getOrCreate("GENERIC_SECRET", "PF001");
+  const second = reg.getOrCreate("GENERIC_SECRET", "PF001");
+  const third = reg.getOrCreate("GENERIC_SECRET", "PF001");
+  assert.strictEqual(first, second);
+  assert.strictEqual(second, third);
+});
+
+test("same value under a different category gives a different placeholder (categories never share a counter)", () => {
+  const reg = new PlaceholderRegistry();
+  const a = reg.getOrCreate("PASSWORD", "sameRawValue");
+  const b = reg.getOrCreate("API_KEY", "sameRawValue");
+  assert.notStrictEqual(a, b);
+});
+
+test("multiple categories get independent per-category counters", () => {
+  const reg = new PlaceholderRegistry();
+  assert.strictEqual(reg.getOrCreate("PASSWORD", "p1"), "<PASSWORD_1>");
+  assert.strictEqual(reg.getOrCreate("API_KEY", "k1"), "<API_KEY_1>");
+  assert.strictEqual(reg.getOrCreate("PASSWORD", "p2"), "<PASSWORD_2>");
+  assert.strictEqual(reg.getOrCreate("API_KEY", "k2"), "<API_KEY_2>");
+});
+
+test("placeholder text is built only from category + counter - never contains any part of the real value", () => {
+  const reg = new PlaceholderRegistry();
+  const secretValue = "SuperSecretDatabasePassword9000";
+  const token = reg.getOrCreate("PASSWORD", secretValue);
+  assert.ok(!token.includes(secretValue));
+  // Not even a meaningful substring of it.
+  assert.ok(!token.toLowerCase().includes("superdatabase"));
+  assert.match(token, /^<PASSWORD_\d+>$/);
+});
+
+console.log("\nPlaceholder mode wired into detection functions:");
+
+test("config: key-name match produces a typed placeholder instead of MASK when a registry is given", () => {
+  const reg = new PlaceholderRegistry();
+  const entries = [];
+  const out = redactConfigLine("password=fakeSup3rSecret!", 1, "f.env", entries, reg);
+  assert.ok(!out.includes(MASK));
+  assert.match(out, /password=<PASSWORD_1>/);
+  assert.strictEqual(entries[0].after, "<PASSWORD_1>");
+});
+
+test("config: same real value redacted under two different keys still correlates to one placeholder", () => {
+  const reg = new PlaceholderRegistry();
+  const e1 = [];
+  const e2 = [];
+  redactConfigLine("password=fakeShared123", 1, "f.env", e1, reg);
+  redactConfigLine("db.password=fakeShared123", 2, "f.env", e2, reg);
+  assert.strictEqual(e1[0].after, e2[0].after);
+});
+
+test("config: quoted vs. unquoted occurrences of the same value still correlate (identity normalization)", () => {
+  const reg = new PlaceholderRegistry();
+  const e1 = [];
+  const e2 = [];
+  redactConfigLine('password="fakeQuoted123"', 1, "f.env", e1, reg);
+  redactConfigLine("password=fakeQuoted123", 2, "f.env", e2, reg);
+  assert.strictEqual(e1[0].after, e2[0].after);
+});
+
+test("config: value-pattern match (no key hit) still gets a category-appropriate placeholder", () => {
+  const reg = new PlaceholderRegistry();
+  const entries = [];
+  redactConfigLine("some_value=AKIAABCDEFGHIJKLMNOP", 1, "f.env", entries, reg);
+  assert.match(entries[0].after, /^<API_KEY_\d+>$/);
+});
+
+test("code: single-line literal gets a typed placeholder, category resolved from the variable name", () => {
+  const reg = new PlaceholderRegistry();
+  const entries = [];
+  const out = redactCodeLine('String apiKey = "fakeApiKeyValue123";', "java", 1, "f.java", entries, reg);
+  assert.ok(!out.includes("fakeApiKeyValue123"));
+  assert.match(entries[0].after, /^<API_KEY_\d+>$/);
+});
+
+test("multiline (Python paren-style): whole value gets ONE placeholder on the first fragment, rest emptied", () => {
+  const reg = new PlaceholderRegistry();
+  const lines = [
+    "API_SECRET = (",
+    '    "fake-frag-one"',
+    '    "fake-frag-two"',
+    ")",
+  ];
+  const entries = [];
+  scanMultilinePython(lines, "f.py", entries, reg);
+  assert.strictEqual(lines.length, 4, "line count unchanged");
+  assert.match(entries[0].after, /^</);
+  assert.strictEqual(entries[1].after, "");
+  const joined = lines.join("\n");
+  assert.ok(!joined.includes("fake-frag-one"));
+  assert.ok(!joined.includes("fake-frag-two"));
+});
+
+test("multiline (Java plus-style, 3 fragments): one placeholder on the first fragment, both later ones emptied", () => {
+  const reg = new PlaceholderRegistry();
+  const lines = [
+    'String authToken = "fake-plusfrag-one" +',
+    '        "fake-plusfrag-two" +',
+    '        "fake-plusfrag-three";',
+  ];
+  const entries = [];
+  scanMultilinePlus(lines, "f.java", entries, reg);
+  assert.match(entries[0].after, /^<ACCESS_TOKEN_\d+>$/);
+  assert.strictEqual(entries[1].after, "");
+  assert.strictEqual(entries[2].after, "");
+  const joined = lines.join("\n");
+  for (const frag of ["fake-plusfrag-one", "fake-plusfrag-two", "fake-plusfrag-three"]) {
+    assert.ok(!joined.includes(frag));
+  }
+  // Still syntactically a 3-term concatenation, not collapsed to one line.
+  assert.strictEqual((joined.match(/\+/g) || []).length, 2);
+});
+
+test("multiline value correlates with a single-line occurrence of the same reconstructed value elsewhere", () => {
+  const reg = new PlaceholderRegistry();
+  const multilineLines = [
+    'String authToken = "fakeAB" +',
+    '        "CD90";',
+  ];
+  const entries = [];
+  scanMultilinePlus(multilineLines, "f.java", entries, reg);
+  const multilinePlaceholder = entries[0].after;
+
+  const singleEntries = [];
+  redactCodeLine('String backupAuthToken = "fakeABCD90";', "java", 2, "f.java", singleEntries, reg);
+  assert.strictEqual(singleEntries[0].after, multilinePlaceholder);
+});
+
+console.log("\nFull pipeline (scanFiles) with placeholderMode option:");
+
+test("scanFiles({placeholderMode:false}) (default) - unchanged MASK behavior", () => {
+  const files = [{ path: "app.properties", content: "password=fakeDefault123" }];
+  const { sanitizedFiles } = scanFiles(files);
+  assert.ok(sanitizedFiles[0].content.includes(MASK));
+});
+
+test("scanFiles({placeholderMode:true}) - typed placeholders throughout, no MASK anywhere", () => {
+  const files = [{
+    path: "app.properties",
+    content: [
+      "password=fakeAppPass123",
+      "api_key=fakeAppKey456",
+    ].join("\n"),
+  }];
+  const { sanitizedFiles, reportEntries } = scanFiles(files, { placeholderMode: true });
+  const out = sanitizedFiles[0].content;
+  assert.ok(!out.includes(MASK));
+  assert.ok(out.includes("<PASSWORD_1>"));
+  assert.ok(out.includes("<API_KEY_1>"));
+  assert.strictEqual(reportEntries.length, 2);
+});
+
+test("scanFiles({placeholderMode:true}) - determinism: repeated scans of the same input produce identical output", () => {
+  const files = [{
+    path: "app.properties",
+    content: ["api_key=fakeDetKey1", "another_key=fakeDetKey2", "third=fakeDetKey1"].join("\n"),
+  }];
+  const run1 = scanFiles(files, { placeholderMode: true });
+  const run2 = scanFiles(files, { placeholderMode: true });
+  assert.strictEqual(run1.sanitizedFiles[0].content, run2.sanitizedFiles[0].content);
+});
+
+test("scanFiles({placeholderMode:true}) - distinctness across an entire multi-file scan: two different secrets never share a token", () => {
+  const files = [
+    { path: "a.properties", content: "password=fakeUniqueValueOne" },
+    { path: "b.properties", content: "password=fakeUniqueValueTwo" },
+  ];
+  const { reportEntries } = scanFiles(files, { placeholderMode: true });
+  assert.strictEqual(reportEntries.length, 2);
+  assert.notStrictEqual(reportEntries[0].after, reportEntries[1].after);
+});
+
+test("scanFiles({placeholderMode:true}) - the same secret repeated across two different files still correlates", () => {
+  const files = [
+    { path: "a.properties", content: "password=fakeSharedAcrossFiles" },
+    { path: "b.properties", content: "backup_password=fakeSharedAcrossFiles" },
+  ];
+  const { reportEntries } = scanFiles(files, { placeholderMode: true });
+  assert.strictEqual(reportEntries[0].after, reportEntries[1].after);
+});
+
+test("scanFiles({placeholderMode:true}) - no original secret value remains anywhere in the sanitized output", () => {
+  const files = [{
+    path: "secrets.py",
+    content: [
+      'API_SECRET = (',
+      '    "fakeMultilinePartA"',
+      '    "fakeMultilinePartB"',
+      ')',
+      'password = "fakeSingleLineSecret"',
+    ].join("\n"),
+  }];
+  const { sanitizedFiles } = scanFiles(files, { placeholderMode: true });
+  const out = sanitizedFiles[0].content;
+  for (const secret of ["fakeMultilinePartA", "fakeMultilinePartB", "fakeSingleLineSecret"]) {
+    assert.ok(!out.includes(secret));
+  }
+});
+
+test("category helpers resolve as expected (spot checks against engine.py's mapping tables)", () => {
+  assert.strictEqual(categoryForKeyPattern("password"), "PASSWORD");
+  assert.strictEqual(categoryForKeyPattern("api[_-]?key"), "API_KEY");
+  assert.strictEqual(categoryForKeyPattern("some_unmapped_future_pattern"), "GENERIC_SECRET");
+  assert.strictEqual(categoryForValuePattern("aws_access_key_id"), "API_KEY");
+  assert.strictEqual(categoryForValuePattern("high_entropy"), "GENERIC_SECRET");
+  assert.strictEqual(categoryForCodeKeyword("apikey"), "API_KEY");
+  assert.strictEqual(categoryForCodeKeyword("key"), "GENERIC_SECRET");
+  assert.strictEqual(extractCodeKeyword("String apiKeyForService"), "apikey");
+  assert.strictEqual(mostSpecificCategory(["GENERIC_SECRET", "API_KEY"]), "API_KEY");
+  assert.strictEqual(mostSpecificCategory(["GENERIC_SECRET", "GENERIC_SECRET"]), "GENERIC_SECRET");
 });
 
 // -----------------------------------------------------------------------

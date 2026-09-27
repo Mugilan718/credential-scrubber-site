@@ -34,6 +34,12 @@
     <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
     <button class="btn-glow" id="chooseBtn">Choose folder</button>
     <p class="drop-note">Works best in Chrome/Edge. Very large projects (thousands of files) may take a moment.</p>
+
+    <label class="placeholder-toggle" for="placeholderModeToggle">
+      <input type="checkbox" id="placeholderModeToggle" />
+      Use typed placeholders (like <code>&lt;PASSWORD_1&gt;</code>) instead of one shared mask
+    </label>
+    <p class="placeholder-toggle-note">Keeps track of whether two values are the same secret or two different ones — useful if you're about to hand the result to an AI. Leave unchecked for the default: every finding replaced with the same <code>***REDACTED***</code>.</p>
   </div>
 
   <div id="scanningState" class="scanning-state hidden">
