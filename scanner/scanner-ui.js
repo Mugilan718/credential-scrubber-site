@@ -75,6 +75,38 @@
     return BINARY_EXT.some((ext) => lower.endsWith(ext));
   }
 
+  // Icon + severity color per detection rule, for the results table.
+  // "severity" here is a rough visual grouping to scan the table at a
+  // glance, not a claim from the engine itself (scanner-engine.js never
+  // ranks findings) - a private key or a credential embedded in a URL get
+  // the strongest (danger) treatment since the secret is either maximally
+  // powerful or already partway toward being exposed (e.g. in a URL a
+  // browser/proxy might log); everything else is a normal finding, split
+  // only by shape (key-name match / token-shaped / network-shaped /
+  // generic-entropy) for visual variety, not because one is "worse."
+  const RULE_DISPLAY = {
+    key_name_match: { icon: "key", sev: "sev-cyan" },
+    aws_access_key_id: { icon: "hash", sev: "sev-violet" },
+    aws_secret_key_assignment: { icon: "hash", sev: "sev-violet" },
+    github_token: { icon: "hash", sev: "sev-violet" },
+    slack_token: { icon: "hash", sev: "sev-violet" },
+    jwt_token: { icon: "hash", sev: "sev-violet" },
+    bearer_token: { icon: "hash", sev: "sev-violet" },
+    private_key_block: { icon: "key", sev: "sev-danger" },
+    url_with_credentials: { icon: "link", sev: "sev-danger" },
+    ipv4_address: { icon: "link", sev: "sev-cyan" },
+    ipv6_address: { icon: "link", sev: "sev-cyan" },
+    generic_url: { icon: "link", sev: "sev-cyan" },
+    email_address: { icon: "hash", sev: "sev-cyan" },
+    high_entropy: { icon: "alert", sev: "sev-violet" },
+  };
+  const DEFAULT_RULE_DISPLAY = { icon: "hash", sev: "sev-cyan" };
+
+  function ruleDisplayFor(rule) {
+    const base = rule.startsWith("multiline_concat_") ? rule.slice("multiline_concat_".length) : rule;
+    return RULE_DISPLAY[base] || DEFAULT_RULE_DISPLAY;
+  }
+
   chooseBtn.addEventListener("click", () => folderInput.click());
   dropZone.addEventListener("click", (e) => {
     if (e.target === chooseBtn) return;
@@ -241,13 +273,18 @@
       const changedBadge = e.previously_ignored_value_changed
         ? `<span class="result-changed-badge" title="This was previously ignored, but the value has since changed - it's shown again rather than staying hidden.">⚠ changed since ignored</span>`
         : "";
+      const display = ruleDisplayFor(e.rule);
       html += `<div class="result-row">
         <div class="result-line">${e.line}</div>
         <div class="result-file" title="${escapeHtml(e.file)}">${escapeHtml(e.file)}</div>
-        <div class="result-rule">${escapeHtml(e.rule)}${changedBadge}</div>
+        <div class="result-rule">
+          <span class="result-rule-badge ${display.sev}"><svg class="icon"><use href="#icon-${display.icon}"/></svg></span>
+          <span class="result-rule-text">${escapeHtml(e.rule)}</span>
+          ${changedBadge}
+        </div>
         <div class="result-key">${escapeHtml(e.key || "—")}</div>
         <div class="result-action">
-          ${storageSupported ? `<button class="ignore-btn" data-index="${i}" title="Remember this exact value as a known false positive/accepted risk on this device only">Ignore</button>` : ""}
+          ${storageSupported ? `<button class="ignore-btn" data-index="${i}" title="Remember this exact value as a known false positive/accepted risk on this device only"><svg class="icon"><use href="#icon-x"/></svg> Ignore</button>` : ""}
         </div>
       </div>`;
     });
