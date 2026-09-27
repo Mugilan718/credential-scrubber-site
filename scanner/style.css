@@ -53,8 +53,8 @@ a { color: inherit; }
   padding: 40px 24px 80px;
   min-height: 60vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
 }
 
 /* ---------- Drop zone ---------- */
