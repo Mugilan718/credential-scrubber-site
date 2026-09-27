@@ -39,6 +39,10 @@
   const folderFilterPromptState = document.getElementById("folderFilterPromptState");
   const useLastSelectionBtn = document.getElementById("useLastSelectionBtn");
   const useFreshSelectionBtn = document.getElementById("useFreshSelectionBtn");
+  const ignoreConfirmModal = document.getElementById("ignoreConfirmModal");
+  const confirmIgnoreBtn = document.getElementById("confirmIgnoreBtn");
+  const cancelIgnoreBtn = document.getElementById("cancelIgnoreBtn");
+  const ignoredFindingsList = document.getElementById("ignoredFindingsList");
 
   // File System Access API (Phase 5) - Chromium-based browsers only today
   // (not Firefox/Safari). Feature-detected, never assumed - everything
@@ -50,6 +54,22 @@
   let lastSanitizedFiles = [];
   let lastReportEntries = [];
   let lastFilesScanned = 0;
+
+  // Ignored-findings review list (revertible ignores) - scoped to the
+  // CURRENT scan's results, not the whole browser session: reset whenever
+  // a new scan starts (scanReadableFiles()/startOverBtn below), since
+  // findings ignored while looking at a different folder aren't relevant
+  // once you've moved on. Each entry is the full report entry (file, line,
+  // rule, key, before, after, occurrenceIndex) as returned by applyIgnores()'s
+  // `restoredEntries` - everything reapplyRedaction() needs to reverse it,
+  // and everything the list needs to display it. The underlying IndexedDB
+  // ignore record (hash-based, used by future re-scans) is separate and
+  // persists regardless - this list is just this tab's view onto "what did
+  // I just ignore," not a replacement for that.
+  let ignoredEntries = [];
+  // Which result-row's ignore is awaiting confirmation in the modal.
+  let pendingIgnoreIndex = null;
+  let pendingIgnoreBtn = null;
 
   // Folder-filter tree (scan-scope selection) state. checkedPaths is the
   // single source of truth for what's included - see scanner-engine.js's
@@ -440,6 +460,11 @@
    * skipped binary/oversized files untouched, same as before.
    */
   async function scanReadableFiles(readable, rawFilesForZip) {
+    // A fresh scan starts a fresh "ignored findings" review list - entries
+    // ignored while looking at a previous folder/scan aren't relevant here.
+    ignoredEntries = [];
+    renderIgnoredFindings();
+
     scanningText.textContent = `Scanning ${readable.length} files…`;
     // Yield to the browser so the "scanning" state actually paints before the
     // (synchronous, potentially CPU-heavy) scan runs.
@@ -524,18 +549,50 @@
     resultsTable.innerHTML = html;
   }
 
-  resultsTable.addEventListener("click", async (e) => {
+  // Clicking "Ignore" only asks for confirmation - it does NOT itself
+  // restore anything yet. The actual ignore (which un-redacts the real
+  // value into the working copy) only happens once the user explicitly
+  // confirms in the modal below, so a single accidental click can never
+  // silently unmask a real secret.
+  resultsTable.addEventListener("click", (e) => {
     const btn = e.target.closest(".ignore-btn");
     if (!btn) return;
-    const idx = Number(btn.dataset.index);
+    pendingIgnoreIndex = Number(btn.dataset.index);
+    pendingIgnoreBtn = btn;
+    if (ignoreConfirmModal) ignoreConfirmModal.classList.remove("hidden");
+  });
+
+  if (cancelIgnoreBtn) {
+    cancelIgnoreBtn.addEventListener("click", () => {
+      pendingIgnoreIndex = null;
+      pendingIgnoreBtn = null;
+      if (ignoreConfirmModal) ignoreConfirmModal.classList.add("hidden");
+    });
+  }
+
+  if (confirmIgnoreBtn) {
+    confirmIgnoreBtn.addEventListener("click", async () => {
+      const idx = pendingIgnoreIndex;
+      const btn = pendingIgnoreBtn;
+      pendingIgnoreIndex = null;
+      pendingIgnoreBtn = null;
+      if (ignoreConfirmModal) ignoreConfirmModal.classList.add("hidden");
+      if (idx == null) return;
+      await performIgnore(idx, btn);
+    });
+  }
+
+  async function performIgnore(idx, btn) {
     const entry = lastReportEntries[idx];
     if (!entry) return;
 
     const db = await getDb();
     if (!db) return;
 
-    btn.disabled = true;
-    btn.textContent = "Ignoring…";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Ignoring…";
+    }
 
     const hash = await hashValue(entry.before);
     await ScannerStorage.setIgnore(db, entry.file, entry.key, entry.rule, hash);
@@ -551,17 +608,73 @@
     lastSanitizedFiles = reconciled.sanitizedFiles;
     lastReportEntries = reconciled.reportEntries;
 
+    if (reconciled.restoredEntries && reconciled.restoredEntries.length) {
+      ignoredEntries = ignoredEntries.concat(reconciled.restoredEntries);
+      renderIgnoredFindings();
+    }
+
     // Fade the row out before re-rendering without it, rather than an
     // instant cut - a no-op visually for prefers-reduced-motion (the
     // animation is disabled globally, so this timeout is the only delay,
     // matching what CSS would have taken anyway).
-    const row = btn.closest(".result-row");
+    const row = btn ? btn.closest(".result-row") : null;
     if (row) {
       row.classList.add("ignoring");
       await new Promise((r) => setTimeout(r, 220));
     }
     renderResults(lastFilesScanned, lastReportEntries);
-  });
+  }
+
+  /** Renders the "ignored findings (this scan)" review list. */
+  function renderIgnoredFindings() {
+    if (!ignoredFindingsList) return;
+    if (ignoredEntries.length === 0) {
+      ignoredFindingsList.innerHTML = `<p class="scan-history-empty">Nothing ignored yet.</p>`;
+      return;
+    }
+    ignoredFindingsList.innerHTML = ignoredEntries.map((entry, i) => `
+      <div class="scan-history-row">
+        <span class="scan-history-left">
+          <svg class="icon scan-history-row-icon"><use href="#icon-shield"/></svg>
+          <span>
+            <span class="scan-history-date">${escapeHtml(entry.key || "—")} <span class="ignored-finding-meta">${escapeHtml(entry.rule)}</span></span>
+            <span class="ignored-finding-meta" title="${escapeHtml(entry.file)}">${escapeHtml(entry.file)}:${entry.line}</span>
+          </span>
+        </span>
+        <button class="restore-btn" data-index="${i}" title="Re-mask this value, remove it from the local ignore list, and bring it back into the results above"><svg class="icon"><use href="#icon-undo"/></svg> Restore redaction</button>
+      </div>
+    `).join("");
+  }
+
+  if (ignoredFindingsList) {
+    ignoredFindingsList.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".restore-btn");
+      if (!btn) return;
+      const idx = Number(btn.dataset.index);
+      const entry = ignoredEntries[idx];
+      if (!entry) return;
+
+      btn.disabled = true;
+      btn.textContent = "Restoring…";
+
+      const db = await getDb();
+      if (db) await ScannerStorage.removeIgnore(db, entry.file, entry.key, entry.rule);
+
+      lastSanitizedFiles = reapplyRedaction(lastSanitizedFiles, entry);
+      ignoredEntries = ignoredEntries.filter((_, i) => i !== idx);
+
+      // Bring it back into the visible results, in the same relative order
+      // (by file, then line) rather than just appending it at the end.
+      const { occurrenceIndex, ...restoredEntry } = entry;
+      lastReportEntries = lastReportEntries.concat([restoredEntry]).sort((a, b) => {
+        if (a.file !== b.file) return a.file < b.file ? -1 : 1;
+        return a.line - b.line;
+      });
+
+      renderIgnoredFindings();
+      renderResults(lastFilesScanned, lastReportEntries);
+    });
+  }
 
   async function refreshScanHistoryUI() {
     if (!scanHistoryList) return;
@@ -887,6 +1000,8 @@
     pendingAllPaths = [];
     pendingSavedFilter = null;
     currentTree = null;
+    ignoredEntries = [];
+    renderIgnoredFindings();
     resultsState.classList.add("hidden");
     dropZone.classList.remove("hidden");
   });
@@ -911,5 +1026,13 @@
       renderTree();
     },
     isPromptVisible: () => !!(folderFilterPromptState && !folderFilterPromptState.classList.contains("hidden")),
+    scanReadableFiles,
+    isIgnoreConfirmVisible: () => !!(ignoreConfirmModal && !ignoreConfirmModal.classList.contains("hidden")),
+    getIgnoredEntries: () => ignoredEntries.map((e) => ({ file: e.file, line: e.line, key: e.key, rule: e.rule })),
+    getLastReportEntries: () => lastReportEntries.map((e) => ({ file: e.file, line: e.line, key: e.key, rule: e.rule })),
+    getLastSanitizedFileContent: (path) => {
+      const f = lastSanitizedFiles.find((f) => f.path === path);
+      return f ? f.content : null;
+    },
   };
 })();

@@ -1146,15 +1146,22 @@ async function applyIgnores(scanResult, ignoreMap) {
       // text to look for - an emptied multiline-fragment placeholder has
       // nothing textual to restore) schedule restoring the original text.
       if (entry.after) {
-        restorations.push({ file: entry.file, line: entry.line, after: entry.after, before: entry.before, occurrenceIndex });
+        restorations.push({ file: entry.file, line: entry.line, after: entry.after, before: entry.before, occurrenceIndex, entry });
       }
     } else {
       survivingEntries.push({ ...entry, previously_ignored_value_changed: true });
     }
   }
 
+  // restoredEntries - the original report entry for each finding actually
+  // un-redacted above, each carrying the exact occurrenceIndex used, so a
+  // caller (scanner-ui.js's "ignored findings" list) can later reverse
+  // this specific restoration with reapplyRedaction() without having to
+  // re-derive which occurrence on the line was touched.
+  const restoredEntries = restorations.map((r) => ({ ...r.entry, occurrenceIndex: r.occurrenceIndex }));
+
   if (restorations.length === 0) {
-    return { sanitizedFiles: scanResult.sanitizedFiles, reportEntries: survivingEntries };
+    return { sanitizedFiles: scanResult.sanitizedFiles, reportEntries: survivingEntries, restoredEntries };
   }
 
   const restorationsByFile = new Map();
@@ -1176,7 +1183,32 @@ async function applyIgnores(scanResult, ignoreMap) {
     return { path: f.path, content: lines.join("\n") };
   });
 
-  return { sanitizedFiles: patchedFiles, reportEntries: survivingEntries };
+  return { sanitizedFiles: patchedFiles, reportEntries: survivingEntries, restoredEntries };
+}
+
+/**
+ * The inverse of one entry's restoration above: re-masks the
+ * `entry.occurrenceIndex`-th occurrence of `entry.before` (the real value
+ * that was restored into the file when this entry was ignored) on
+ * `entry.line` of `entry.file`, replacing it with `entry.after` again -
+ * whatever that was, `MASK` or a placeholder token, exactly as the
+ * original scan produced it. Used by the "ignored findings" list's
+ * "Restore redaction" action. Pure - returns a NEW sanitizedFiles array,
+ * never mutates its input. A no-op (returns the input array unchanged) for
+ * an entry with no `after` text to restore back onto, mirroring
+ * applyIgnores()'s own restoration skip for that same case.
+ */
+function reapplyRedaction(sanitizedFiles, entry) {
+  if (!entry.after) return sanitizedFiles;
+  return sanitizedFiles.map((f) => {
+    if (f.path !== entry.file || f.binary) return f;
+    const lines = f.content.split("\n");
+    const idx = entry.line - 1;
+    if (lines[idx] !== undefined) {
+      lines[idx] = replaceNthOccurrence(lines[idx], entry.before, entry.after, entry.occurrenceIndex || 0);
+    }
+    return { path: f.path, content: lines.join("\n") };
+  });
 }
 
 if (typeof module !== "undefined") {
@@ -1186,7 +1218,7 @@ if (typeof module !== "undefined") {
     redactConfigLine, redactCodeLine, redactValuePatternsOnly,
     PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
     categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
-    hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
+    hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence, reapplyRedaction,
     computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist,
     findKeyValue, quoteWrap, classifyFile,
     collectFilesFromDirectoryHandle,

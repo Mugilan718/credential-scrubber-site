@@ -91,6 +91,10 @@
   <symbol id="icon-square" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
     <rect x="3.5" y="3.5" width="17" height="17" rx="3"/>
   </symbol>
+  <symbol id="icon-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 11a8 8 0 1 1 2.3 5.6"/>
+    <path d="M4 5.5V11h5.5"/>
+  </symbol>
 </svg>
 
 <nav class="topnav">
@@ -173,9 +177,30 @@
       <button class="btn-ghost" id="startOverBtn">Scan another folder</button>
     </div>
 
-    <p class="ignore-note">Ignoring a finding is remembered on this device only — see "Scan history" below for details.</p>
+    <p class="ignore-note">Ignoring a finding restores the original, unmasked value in this working copy and is remembered on this device only — see "Ignored findings" below to review or undo it.</p>
     <div id="resultsTable" class="results-table"></div>
   </div>
+
+  <div id="ignoreConfirmModal" class="modal-overlay hidden">
+    <div class="modal-box" role="alertdialog" aria-modal="true" aria-labelledby="ignoreConfirmTitle">
+      <h3 id="ignoreConfirmTitle"><svg class="icon icon-md modal-warn-icon"><use href="#icon-alert"/></svg> Ignore this finding?</h3>
+      <p>This will restore the <strong>original, unmasked value</strong> in your downloaded file. Only do this if you're certain this is <strong>not</strong> a real secret.</p>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="cancelIgnoreBtn">Cancel</button>
+        <button class="btn-glow" id="confirmIgnoreBtn">Yes, ignore and unmask</button>
+      </div>
+    </div>
+  </div>
+
+  <section id="ignoredFindingsPanel" class="ignored-findings-panel">
+    <div class="scan-history-header">
+      <h2><span class="section-badge section-badge-violet"><svg class="icon icon-md panel-title-icon"><use href="#icon-shield"/></svg></span> Ignored findings (this scan)</h2>
+    </div>
+    <p class="local-only-note">Findings you've ignored during this scan, with their original masking restored in the working copy above. Restoring re-masks the value, removes it from this device's local ignore list, and brings it back into the results above.</p>
+    <div id="ignoredFindingsList" class="scan-history-list">
+      <p class="scan-history-empty">Nothing ignored yet.</p>
+    </div>
+  </section>
 
   <section id="scanHistoryPanel" class="scan-history-panel">
     <div class="scan-history-header">

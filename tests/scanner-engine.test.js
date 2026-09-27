@@ -16,7 +16,7 @@ const {
   redactConfigLine, redactCodeLine, redactValuePatternsOnly,
   PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
   categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
-  hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence,
+  hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence, reapplyRedaction,
   computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist, getBaseRuleSnapshot,
   findKeyValue, quoteWrap, classifyFile,
   collectFilesFromDirectoryHandle,
@@ -734,6 +734,83 @@ await test("end-to-end scenario matching the exact desktop-parity spec: ignore -
   assert.strictEqual(reconciled3.reportEntries.length, 1, "changed value: reappears, not silently suppressed");
   assert.strictEqual(reconciled3.reportEntries[0].previously_ignored_value_changed, true);
   assert.ok(!reconciled3.sanitizedFiles[0].content.includes("fakeRotatedKey456"), "new value stays redacted");
+});
+
+console.log("\nreapplyRedaction() - reversing an ignore (revertible ignores, checkpoint 1):");
+
+await test("applyIgnores() returns a restoredEntries list carrying the occurrenceIndex used for each restoration", async () => {
+  const before = "fakeRestoreMe";
+  const hash = await hashValue(before);
+  const ignoreMap = { [ignoreKeyFor("f.env", "password", "key_name_match")]: hash };
+  const scanResult = {
+    sanitizedFiles: [{ path: "f.env", content: `password=${MASK}` }],
+    reportEntries: [{ file: "f.env", line: 1, key: "password", rule: "key_name_match", before, after: MASK }],
+  };
+  const result = await applyIgnores(scanResult, ignoreMap);
+  assert.strictEqual(result.restoredEntries.length, 1);
+  assert.strictEqual(result.restoredEntries[0].before, before);
+  assert.strictEqual(result.restoredEntries[0].occurrenceIndex, 0);
+});
+
+await test("reapplyRedaction() reverses a MASK restoration: masked -> ignored/unmasked -> restored/masked again", () => {
+  const before = "fakeRoundTripSecret";
+  const sanitizedAfterIgnore = [{ path: "f.env", content: `password=${before}` }];
+  const entry = { file: "f.env", line: 1, key: "password", rule: "key_name_match", before, after: MASK, occurrenceIndex: 0 };
+  const reMasked = reapplyRedaction(sanitizedAfterIgnore, entry);
+  assert.strictEqual(reMasked[0].content, `password=${MASK}`);
+  // Original array untouched (pure function).
+  assert.strictEqual(sanitizedAfterIgnore[0].content, `password=${before}`);
+});
+
+await test("reapplyRedaction() restores the correct PLACEHOLDER token, not just MASK, when the original scan ran in placeholder mode", () => {
+  const files = [{ path: "app.properties", content: "api_key=fakePlaceholderRoundTrip123" }];
+  const scan = scanFiles(files, { placeholderMode: true });
+  const entry = scan.reportEntries[0];
+  assert.notStrictEqual(entry.after, MASK, "sanity check: placeholder mode really did produce a token, not ***REDACTED***");
+
+  // Simulate: ignore this entry (restores the real value)...
+  const unmasked = scan.sanitizedFiles.map((f) => ({ ...f, content: f.content.replace(entry.after, entry.before) }));
+  // ...then restore the redaction (should bring back the SAME placeholder token).
+  const reMasked = reapplyRedaction(unmasked, { ...entry, occurrenceIndex: 0 });
+  assert.ok(reMasked[0].content.includes(entry.after), "the original placeholder token, not a generic mask, is restored");
+  assert.ok(!reMasked[0].content.includes(entry.before), "the real value is no longer present");
+});
+
+await test("reapplyRedaction() is a no-op (returns input unchanged) when entry.after is empty - mirrors applyIgnores()'s own skip", () => {
+  const sanitized = [{ path: "f.env", content: "unrelated content" }];
+  const entry = { file: "f.env", line: 1, before: "x", after: "", occurrenceIndex: 0 };
+  const result = reapplyRedaction(sanitized, entry);
+  assert.strictEqual(result, sanitized);
+});
+
+await test("reapplyRedaction() only touches the matching file, leaving others untouched", () => {
+  const sanitized = [
+    { path: "a.env", content: "password=realValueA" },
+    { path: "b.env", content: "password=realValueA" }, // same real value, different file
+  ];
+  const entry = { file: "a.env", line: 1, before: "realValueA", after: MASK, occurrenceIndex: 0 };
+  const result = reapplyRedaction(sanitized, entry);
+  assert.strictEqual(result.find((f) => f.path === "a.env").content, `password=${MASK}`);
+  assert.strictEqual(result.find((f) => f.path === "b.env").content, "password=realValueA", "other files are untouched");
+});
+
+await test("end-to-end: ignore then restore round-trips back to the exact original masked output", async () => {
+  const files = [{ path: "app.properties", content: "api_key=fakeEndToEndRoundTrip789" }];
+  const scan = scanFiles(files);
+  const originalMaskedContent = scan.sanitizedFiles[0].content;
+  const entry = scan.reportEntries[0];
+
+  // Ignore it.
+  const hash = await hashValue(entry.before);
+  const ignoreMap = { [ignoreKeyFor(entry.file, entry.key, entry.rule)]: hash };
+  const afterIgnore = await applyIgnores(scan, ignoreMap);
+  assert.strictEqual(afterIgnore.reportEntries.length, 0);
+  assert.strictEqual(afterIgnore.restoredEntries.length, 1);
+
+  // Restore it using the occurrenceIndex applyIgnores() handed back.
+  const restoredEntry = afterIgnore.restoredEntries[0];
+  const afterRestore = reapplyRedaction(afterIgnore.sanitizedFiles, restoredEntry);
+  assert.strictEqual(afterRestore[0].content, originalMaskedContent, "back to exactly the original masked output");
 });
 
 // -----------------------------------------------------------------------
