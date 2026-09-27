@@ -108,6 +108,15 @@
     </div>
   </section>
 
+  <section class="known-limitations-panel">
+    <h2>Known limitations</h2>
+    <ul class="known-limitations-list">
+      <li>No git-diff/changed-files scanning here — every scan is a full pass over whatever folder you give it. (The downloadable desktop app has a git changed-files mode.)</li>
+      <li>An unquoted YAML value's mask isn't force-quoted the way the desktop app does it. A bare <code>*</code> is YAML's alias syntax, so redacting an unquoted YAML scalar can, in rare cases, produce invalid YAML.</li>
+      <li>Scan history, the ignore list, and any rule edits are stored only in this one browser, on this one device — nothing syncs across browsers or devices, and it's lost if you clear this site's browser data.</li>
+    </ul>
+  </section>
+
 </main>
 
 <footer class="scanner-footer">
