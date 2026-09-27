@@ -129,6 +129,10 @@ a { color: inherit; }
   text-align: left;
 }
 
+.folder-tree-scanner-options {
+  margin-top: 16px;
+}
+
 .placeholder-toggle {
   display: inline-flex;
   align-items: center;
