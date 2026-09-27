@@ -8,7 +8,9 @@
   const filesScannedCount = document.getElementById("filesScannedCount");
   const redactionCount = document.getElementById("redactionCount");
   const resultsTable = document.getElementById("resultsTable");
-  const downloadBtn = document.getElementById("downloadBtn");
+  const generateBtn = document.getElementById("generateBtn");
+  const downloadGeneratedBtn = document.getElementById("downloadGeneratedBtn");
+  const staleZipNote = document.getElementById("staleZipNote");
   const scanAgainBtn = document.getElementById("scanAgainBtn");
   const scanAgainSourceNote = document.getElementById("scanAgainSourceNote");
   const startOverBtn = document.getElementById("startOverBtn");
@@ -70,6 +72,16 @@
   // handle) that should be shown by the NEXT updateScanAgainSourceNote()
   // call and then cleared, rather than staying stuck on screen forever.
   let scanAgainFallbackWarning = null;
+
+  // The most recently generated sanitized zip (generate/download
+  // restructuring - ignore-safety checkpoint 2). Nothing is downloadable
+  // until "Generate sanitized file" is clicked; any change to the reviewed
+  // state afterward (an ignore, a restore, or a re-scan) invalidates it -
+  // see invalidateGeneratedZip()/resetGeneratedZipState() below.
+  let generatedZipBlob = null;
+  let generatedZipUrl = null;
+  let zipEverGenerated = false;
+  let zipStale = false;
 
   // Ignored-findings review list (revertible ignores) - scoped to the
   // CURRENT scan's results, not the whole browser session: reset whenever
@@ -478,6 +490,17 @@
    * skipped binary/oversized files untouched, same as before.
    */
   async function scanReadableFiles(readable, rawFilesForZip, { isRescan = false } = {}) {
+    // A re-scan ("Scan again") only invalidates whatever was already
+    // generated for download (see Phase B) - a brand-new scan of a freshly
+    // chosen folder has no such prior result to speak of, so it gets a
+    // full, clean reset instead (no "stale" messaging that would imply
+    // something existed a moment ago).
+    if (isRescan) {
+      invalidateGeneratedZip();
+    } else {
+      resetGeneratedZipState();
+    }
+
     if (!isRescan) {
       scanningText.textContent = `Scanning ${readable.length} files…`;
     }
@@ -528,6 +551,47 @@
       });
       await refreshScanHistoryUI();
     }
+  }
+
+  /** Reflects generatedZipUrl/zipStale/zipEverGenerated onto the Generate/Download UI. */
+  function updateGenerateDownloadUI() {
+    if (generateBtn) {
+      generateBtn.textContent = zipEverGenerated ? "Regenerate sanitized file" : "Generate sanitized file";
+    }
+    if (downloadGeneratedBtn) {
+      if (generatedZipUrl && !zipStale) {
+        downloadGeneratedBtn.classList.remove("hidden");
+      } else {
+        downloadGeneratedBtn.classList.add("hidden");
+      }
+    }
+    if (staleZipNote) {
+      if (zipStale) {
+        staleZipNote.textContent = 'Your changes since the last generated file (an ignore, a restore, or a re-scan) mean it\'s now out of date — click "Generate sanitized file" again before downloading.';
+        staleZipNote.classList.remove("hidden");
+      } else {
+        staleZipNote.classList.add("hidden");
+      }
+    }
+  }
+
+  /** Marks the current generated zip (if any) stale - an ignore/restore/re-scan happened since. */
+  function invalidateGeneratedZip() {
+    if (generatedZipUrl) URL.revokeObjectURL(generatedZipUrl);
+    generatedZipUrl = null;
+    generatedZipBlob = null;
+    if (zipEverGenerated) zipStale = true;
+    updateGenerateDownloadUI();
+  }
+
+  /** Full reset for a brand-new scan (not a re-scan of the same results) - back to "not yet generated." */
+  function resetGeneratedZipState() {
+    if (generatedZipUrl) URL.revokeObjectURL(generatedZipUrl);
+    generatedZipUrl = null;
+    generatedZipBlob = null;
+    zipEverGenerated = false;
+    zipStale = false;
+    updateGenerateDownloadUI();
   }
 
   /**
@@ -660,6 +724,7 @@
       ignoredEntries = ignoredEntries.concat(reconciled.restoredEntries);
       renderIgnoredFindings();
     }
+    invalidateGeneratedZip();
 
     // Fade the row out before re-rendering without it, rather than an
     // instant cut - a no-op visually for prefers-reduced-motion (the
@@ -718,6 +783,7 @@
         if (a.file !== b.file) return a.file < b.file ? -1 : 1;
         return a.line - b.line;
       });
+      invalidateGeneratedZip();
 
       renderIgnoredFindings();
       renderResults(lastFilesScanned, lastReportEntries);
@@ -1014,31 +1080,45 @@
     });
   }
 
-  downloadBtn.addEventListener("click", async () => {
-    downloadBtn.disabled = true;
-    downloadBtn.textContent = "Building zip…";
+  // "Generate sanitized file" locks in whatever's CURRENTLY ignored/
+  // restored and builds the zip from it - nothing is downloadable before
+  // this is clicked at least once (Phase B), and any change afterward
+  // (an ignore, a restore, or a re-scan) invalidates this specific result
+  // via invalidateGeneratedZip() rather than silently letting a stale zip
+  // stay downloadable.
+  if (generateBtn) {
+    generateBtn.addEventListener("click", async () => {
+      generateBtn.disabled = true;
+      generateBtn.textContent = "Generating…";
 
-    const zip = new JSZip();
-    for (const f of lastSanitizedFiles) {
-      if (f.rawFile) {
-        zip.file(f.path, f.content); // original File object, binary-safe
-      } else {
-        zip.file(f.path, f.content);
+      const zip = new JSZip();
+      for (const f of lastSanitizedFiles) {
+        zip.file(f.path, f.content); // rawFile entries carry a binary-safe File object directly
       }
-    }
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "sanitized-project.zip";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+      const blob = await zip.generateAsync({ type: "blob" });
 
-    downloadBtn.disabled = false;
-    downloadBtn.textContent = "Download sanitized copy (.zip)";
-  });
+      if (generatedZipUrl) URL.revokeObjectURL(generatedZipUrl);
+      generatedZipBlob = blob;
+      generatedZipUrl = URL.createObjectURL(blob);
+      zipEverGenerated = true;
+      zipStale = false;
+
+      generateBtn.disabled = false;
+      updateGenerateDownloadUI();
+    });
+  }
+
+  if (downloadGeneratedBtn) {
+    downloadGeneratedBtn.addEventListener("click", () => {
+      if (!generatedZipUrl || zipStale) return; // shouldn't be reachable (hidden in that state), but never serve a stale/missing zip
+      const a = document.createElement("a");
+      a.href = generatedZipUrl;
+      a.download = "sanitized-project.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+  }
 
   // "Scan again" re-scans the SAME folder without reopening the filter
   // tree, preserving checkedPaths as-is (requirement: keep the current
@@ -1111,6 +1191,7 @@
     lastScanHandle = null;
     scanAgainFallbackWarning = null;
     if (scanAgainSourceNote) scanAgainSourceNote.classList.add("hidden");
+    resetGeneratedZipState();
     renderIgnoredFindings();
     resultsState.classList.add("hidden");
     dropZone.classList.remove("hidden");
@@ -1144,6 +1225,13 @@
       const f = lastSanitizedFiles.find((f) => f.path === path);
       return f ? f.content : null;
     },
+    getZipState: () => ({
+      hasDownloadUrl: !!generatedZipUrl,
+      isDownloadVisible: !!(downloadGeneratedBtn && !downloadGeneratedBtn.classList.contains("hidden")),
+      zipStale: zipStale,
+      isStaleNoteVisible: !!(staleZipNote && !staleZipNote.classList.contains("hidden")),
+      generateBtnLabel: generateBtn ? generateBtn.textContent : null,
+    }),
     getScanAgainSourceNote: () => ({
       visible: !!(scanAgainSourceNote && !scanAgainSourceNote.classList.contains("hidden")),
       text: scanAgainSourceNote ? scanAgainSourceNote.textContent : null,

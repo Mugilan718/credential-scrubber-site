@@ -454,6 +454,11 @@ a { color: inherit; }
   margin: 0 0 12px;
 }
 
+.stale-zip-note {
+  color: var(--danger) !important;
+  font-weight: 600;
+}
+
 .results-empty {
   padding: 60px 20px;
   text-align: center;
