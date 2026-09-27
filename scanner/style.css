@@ -239,6 +239,109 @@ a { color: inherit; }
 
 /* ---------- Results ---------- */
 
+/* ---------- Folder-filter tree ---------- */
+
+.folder-tree-state {
+  width: 100%;
+  max-width: 720px;
+  text-align: left;
+}
+
+.folder-tree-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  margin: 0 0 6px;
+}
+
+.folder-tree-header p {
+  color: var(--ink-soft);
+  font-size: 14px;
+  margin: 0 0 20px;
+}
+
+.folder-tree-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.folder-tree-summary { color: var(--ink-soft); font-size: 12.5px; }
+.folder-tree-toolbar-actions { display: flex; gap: 8px; }
+
+.folder-tree-list {
+  max-height: 380px;
+  overflow-y: auto;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  padding: 6px 0;
+  background: var(--bg-panel);
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.tree-row:hover { background: rgba(255,255,255,0.03); }
+
+.tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--ink-soft);
+  cursor: pointer;
+  padding: 0;
+}
+
+.tree-toggle .icon { transition: transform 0.15s ease; }
+.tree-toggle[aria-expanded="true"] .icon { transform: rotate(90deg); }
+
+.tree-toggle-spacer { display: inline-block; width: 18px; flex-shrink: 0; }
+
+.tree-checkbox {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--glow-cyan);
+  cursor: pointer;
+}
+
+.tree-icon { flex-shrink: 0; color: var(--ink-soft); }
+.tree-folder > .tree-icon { color: var(--glow-cyan); }
+
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+
+.tree-count {
+  color: var(--ink-soft);
+  font-size: 11px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.folder-tree-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
 .results-state { width: 100%; }
 
 .results-summary {

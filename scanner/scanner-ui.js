@@ -29,6 +29,13 @@
   const scanRememberedFolderBtn = document.getElementById("scanRememberedFolderBtn");
   const rememberedFolderName = document.getElementById("rememberedFolderName");
   const forgetFolderBtn = document.getElementById("forgetFolderBtn");
+  const folderTreeState = document.getElementById("folderTreeState");
+  const folderTreeSummary = document.getElementById("folderTreeSummary");
+  const folderTreeList = document.getElementById("folderTreeList");
+  const selectAllBtn = document.getElementById("selectAllBtn");
+  const deselectAllBtn = document.getElementById("deselectAllBtn");
+  const scanSelectedBtn = document.getElementById("scanSelectedBtn");
+  const cancelTreeBtn = document.getElementById("cancelTreeBtn");
 
   // File System Access API (Phase 5) - Chromium-based browsers only today
   // (not Firefox/Safari). Feature-detected, never assumed - everything
@@ -40,6 +47,18 @@
   let lastSanitizedFiles = [];
   let lastReportEntries = [];
   let lastFilesScanned = 0;
+
+  // Folder-filter tree (scan-scope selection) state. checkedPaths is the
+  // single source of truth for what's included - see scanner-engine.js's
+  // getNodeCheckState()/setNodeChecked() module comment. expandedFolders
+  // is purely a UI concern (which folders have been clicked open) and
+  // only affects what's currently rendered, never what's checked.
+  let currentTree = null;
+  let treeIndex = null;
+  let checkedPaths = new Set();
+  let expandedFolders = new Set();
+  let pendingReadable = [];
+  let pendingRawFilesForZip = [];
 
   // This browser's local rule overrides (Phase 4) - loaded once at
   // startup, kept in memory, and persisted back to IndexedDB after every
@@ -173,6 +192,7 @@
     dropZone.classList.add("hidden");
     scanningState.classList.remove("hidden");
     resultsState.classList.add("hidden");
+    if (folderTreeState) folderTreeState.classList.add("hidden");
 
     const files = Array.from(fileList);
     scanningText.textContent = `Reading ${files.length} files…`;
@@ -196,7 +216,160 @@
       }
     }
 
-    await scanReadableFiles(readable, rawFilesForZip);
+    presentFolderTree(readable, rawFilesForZip);
+  }
+
+  /**
+   * Shows the folder-filter tree (checkpoint 1: everything checked by
+   * default, every visit - checkpoint 2 adds remembering/reapplying a
+   * prior selection here). Does NOT scan yet - scanning happens only
+   * once the user confirms via "Scan selected files".
+   */
+  function presentFolderTree(readable, rawFilesForZip) {
+    // scanFiles() silently drops any path under a SKIP_DIRS segment
+    // (.git, node_modules, etc.) regardless of what's checked - filtering
+    // them out of the tree too keeps "N of M files selected" honest and
+    // avoids offering a checkbox for content that could never end up in
+    // the output either way.
+    const notSkipped = (f) => !f.path.split("/").some((seg) => SKIP_DIRS.has(seg));
+    pendingReadable = readable.filter(notSkipped);
+    pendingRawFilesForZip = rawFilesForZip.filter(notSkipped);
+
+    const allPaths = pendingReadable.map((f) => f.path).concat(pendingRawFilesForZip.map((f) => f.path));
+    currentTree = buildFileTree(allPaths);
+    treeIndex = indexFileTree(currentTree);
+    checkedPaths = new Set(allPaths); // everything included by default
+    expandedFolders = new Set(); // top-level only, expand on demand - see renderTree()
+
+    scanningState.classList.add("hidden");
+    resultsState.classList.add("hidden");
+    dropZone.classList.add("hidden");
+    if (folderTreeState) {
+      folderTreeState.classList.remove("hidden");
+      renderTree();
+    } else {
+      // No tree UI available for some reason - fall back to scanning
+      // everything, rather than leaving the user stuck on a blank page.
+      scanReadableFiles(pendingReadable, pendingRawFilesForZip);
+    }
+  }
+
+  /**
+   * Renders only the currently-expanded portion of the tree (top-level
+   * children always shown; a folder's own children are only rendered
+   * once it's been expanded at least once) - keeps this fast even for a
+   * project with thousands of files, since DOM node count is bounded by
+   * what the user has actually clicked open, not the project's total size.
+   */
+  function renderTree() {
+    if (!folderTreeList || !currentTree) return;
+    let html = "";
+    for (const child of currentTree.children) {
+      html += treeRowHtml(child, 0);
+    }
+    folderTreeList.innerHTML = html || `<p class="scan-history-empty">No files found.</p>`;
+    folderTreeList.querySelectorAll('[data-indeterminate="true"]').forEach((cb) => {
+      cb.indeterminate = true;
+    });
+    updateTreeSummary();
+  }
+
+  function treeRowHtml(node, depth) {
+    const state = getNodeCheckState(node, checkedPaths);
+    const indent = `padding-left:${depth * 20 + 12}px`;
+    if (node.type === "file") {
+      return `<div class="tree-row tree-file" style="${indent}">
+        <span class="tree-toggle-spacer"></span>
+        <input type="checkbox" class="tree-checkbox" data-path="${escapeHtml(node.path)}" ${state === "checked" ? "checked" : ""} />
+        <svg class="icon tree-icon"><use href="#icon-file"/></svg>
+        <span class="tree-name" title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</span>
+      </div>`;
+    }
+    const expanded = expandedFolders.has(node.path);
+    const fileCount = collectFilePaths(node).length;
+    let html = `<div class="tree-row tree-folder" style="${indent}">
+      <button type="button" class="tree-toggle" data-path="${escapeHtml(node.path)}" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(node.name)}">
+        <svg class="icon"><use href="#icon-chevron"/></svg>
+      </button>
+      <input type="checkbox" class="tree-checkbox" data-path="${escapeHtml(node.path)}" ${state === "checked" ? "checked" : ""} ${state === "indeterminate" ? 'data-indeterminate="true"' : ""} />
+      <svg class="icon tree-icon"><use href="#icon-folder"/></svg>
+      <span class="tree-name" title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</span>
+      <span class="tree-count">${fileCount} file${fileCount === 1 ? "" : "s"}</span>
+    </div>`;
+    if (expanded) {
+      for (const child of node.children) {
+        html += treeRowHtml(child, depth + 1);
+      }
+    }
+    return html;
+  }
+
+  function updateTreeSummary() {
+    if (!currentTree) return;
+    const total = collectFilePaths(currentTree).length;
+    const checkedCount = checkedPaths.size;
+    if (folderTreeSummary) folderTreeSummary.textContent = `${checkedCount} of ${total} files selected`;
+    if (scanSelectedBtn) {
+      scanSelectedBtn.textContent = `Scan selected files (${checkedCount})`;
+      scanSelectedBtn.disabled = checkedCount === 0;
+    }
+  }
+
+  if (folderTreeList) {
+    folderTreeList.addEventListener("click", (e) => {
+      const toggleBtn = e.target.closest(".tree-toggle");
+      if (!toggleBtn) return;
+      const path = toggleBtn.dataset.path;
+      if (expandedFolders.has(path)) expandedFolders.delete(path);
+      else expandedFolders.add(path);
+      renderTree();
+    });
+
+    folderTreeList.addEventListener("change", (e) => {
+      const checkbox = e.target.closest(".tree-checkbox");
+      if (!checkbox) return;
+      const node = treeIndex.get(checkbox.dataset.path);
+      if (!node) return;
+      checkedPaths = setNodeChecked(node, checkbox.checked, checkedPaths);
+      renderTree();
+    });
+  }
+
+  if (selectAllBtn) {
+    selectAllBtn.addEventListener("click", () => {
+      if (!currentTree) return;
+      checkedPaths = setNodeChecked(currentTree, true, checkedPaths);
+      renderTree();
+    });
+  }
+
+  if (deselectAllBtn) {
+    deselectAllBtn.addEventListener("click", () => {
+      if (!currentTree) return;
+      checkedPaths = setNodeChecked(currentTree, false, checkedPaths);
+      renderTree();
+    });
+  }
+
+  if (scanSelectedBtn) {
+    scanSelectedBtn.addEventListener("click", async () => {
+      if (folderTreeState) folderTreeState.classList.add("hidden");
+      scanningState.classList.remove("hidden");
+      scanningText.textContent = "Scanning selected files…";
+      const filteredReadable = filterFilesByCheckedPaths(pendingReadable, checkedPaths);
+      const filteredRaw = filterFilesByCheckedPaths(pendingRawFilesForZip, checkedPaths);
+      await scanReadableFiles(filteredReadable, filteredRaw);
+    });
+  }
+
+  if (cancelTreeBtn) {
+    cancelTreeBtn.addEventListener("click", () => {
+      if (folderTreeState) folderTreeState.classList.add("hidden");
+      dropZone.classList.remove("hidden");
+      pendingReadable = [];
+      pendingRawFilesForZip = [];
+      currentTree = null;
+    });
   }
 
   /**
@@ -552,13 +725,14 @@
     dropZone.classList.add("hidden");
     scanningState.classList.remove("hidden");
     resultsState.classList.add("hidden");
+    if (folderTreeState) folderTreeState.classList.add("hidden");
     scanningText.textContent = "Reading remembered folder…";
 
     const { files: readable } = await collectFilesFromDirectoryHandle(handle, {
       maxFileBytes: MAX_FILE_BYTES,
       isBinaryByName,
     });
-    await scanReadableFiles(readable, []);
+    presentFolderTree(readable, []);
   }
 
   if (pickRememberedFolderBtn) {
@@ -647,6 +821,9 @@
     lastSanitizedFiles = [];
     lastReportEntries = [];
     lastFilesScanned = 0;
+    pendingReadable = [];
+    pendingRawFilesForZip = [];
+    currentTree = null;
     resultsState.classList.add("hidden");
     dropZone.classList.remove("hidden");
   });
@@ -656,4 +833,19 @@
     div.textContent = str;
     return div.innerHTML;
   }
+
+  // Test-only hook: lets the Playwright screenshot checks in this
+  // project drive the REAL presentFolderTree()/renderTree() closure
+  // directly (e.g. with a synthetic file list), instead of a
+  // hand-reconstructed copy of the markup - not used by the app itself,
+  // and harmless to expose for a client-side, no-server tool like this.
+  window.__scannerUiTestHooks = {
+    presentFolderTree,
+    getTreeState: () => ({ checkedPaths: new Set(checkedPaths), expandedFolders: new Set(expandedFolders) }),
+    setExpanded: (path, expanded) => {
+      if (expanded) expandedFolders.add(path);
+      else expandedFolders.delete(path);
+      renderTree();
+    },
+  };
 })();

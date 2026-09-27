@@ -77,6 +77,20 @@
   <symbol id="icon-hash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
     <path d="M5 9h14M5 15h14M10 4l-2.5 16M16 4l-2.5 16"/>
   </symbol>
+  <symbol id="icon-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l6 6-6 6"/>
+  </symbol>
+  <symbol id="icon-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+    <path d="M14 3v4h4"/>
+  </symbol>
+  <symbol id="icon-check-square" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.5" y="3.5" width="17" height="17" rx="3"/>
+    <path d="M8 12l2.5 2.5L16 9"/>
+  </symbol>
+  <symbol id="icon-square" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.5" y="3.5" width="17" height="17" rx="3"/>
+  </symbol>
 </svg>
 
 <nav class="topnav">
@@ -119,6 +133,25 @@
   <div id="scanningState" class="scanning-state hidden">
     <div class="spinner"></div>
     <p id="scanningText">Reading files…</p>
+  </div>
+
+  <div id="folderTreeState" class="folder-tree-state hidden">
+    <div class="folder-tree-header">
+      <h2><svg class="icon icon-md panel-title-icon"><use href="#icon-folder"/></svg> Choose what to scan</h2>
+      <p>Everything is included by default. Uncheck any folder or file you'd rather leave out before scanning.</p>
+    </div>
+    <div class="folder-tree-toolbar">
+      <span id="folderTreeSummary" class="folder-tree-summary"></span>
+      <span class="folder-tree-toolbar-actions">
+        <button type="button" class="btn-ghost btn-small" id="selectAllBtn">Select all</button>
+        <button type="button" class="btn-ghost btn-small" id="deselectAllBtn">Deselect all</button>
+      </span>
+    </div>
+    <div id="folderTreeList" class="folder-tree-list" role="tree"></div>
+    <div class="folder-tree-actions">
+      <button class="btn-glow" id="scanSelectedBtn">Scan selected files</button>
+      <button class="btn-ghost" id="cancelTreeBtn">Cancel</button>
+    </div>
   </div>
 
   <div id="resultsState" class="results-state hidden">

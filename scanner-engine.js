@@ -840,6 +840,132 @@ function isLikelyTextFile(path) {
 }
 
 // ---------------------------------------------------------------------
+// Folder-filter tree (scan-scope selection) - pure, DOM- and storage-
+// independent logic for (a) building a nested tree from a flat list of
+// "/"-separated relative file paths, and (b) deriving/mutating
+// per-folder checked state from a flat Set of checked LEAF (file) paths.
+//
+// The checked-paths Set is the single source of truth. A folder's own
+// checked/indeterminate/unchecked state is always DERIVED from it by
+// walking its descendant files (getNodeCheckState) - never stored
+// redundantly on the tree node itself - so tree structure and checked
+// state can never drift apart the way two independently-updated copies
+// could. Every mutating function here returns a brand-new Set rather
+// than mutating the one it was given, matching this file's existing
+// "never mutate a caller's state in place" convention (see
+// computeEffectiveKeyPatterns()).
+// ---------------------------------------------------------------------
+
+/**
+ * Build a nested tree from a flat list of relative file paths (e.g.
+ * ["src/app.py", "src/utils/helper.py", "README.md"]). Returns the
+ * synthetic root node: { type: "folder", name: "", path: "", children }.
+ * Folders are created implicitly wherever a file path requires one to
+ * exist - there is no separate notion of an "empty folder" (matching how
+ * a browser's folder picker/drag-drop only ever reports actual files,
+ * never empty directories, so this is never asked to represent one).
+ * Children are sorted folders-first, then alphabetically within each
+ * type, for deterministic, predictable rendering.
+ */
+function buildFileTree(paths) {
+  const root = { type: "folder", name: "", path: "", children: [] };
+  const folderIndex = new Map([["", root]]);
+
+  function getOrCreateFolder(path) {
+    if (folderIndex.has(path)) return folderIndex.get(path);
+    const lastSlash = path.lastIndexOf("/");
+    const parentPath = lastSlash === -1 ? "" : path.slice(0, lastSlash);
+    const name = lastSlash === -1 ? path : path.slice(lastSlash + 1);
+    const parent = getOrCreateFolder(parentPath);
+    const node = { type: "folder", name, path, children: [] };
+    parent.children.push(node);
+    folderIndex.set(path, node);
+    return node;
+  }
+
+  for (const filePath of paths) {
+    const lastSlash = filePath.lastIndexOf("/");
+    const parentPath = lastSlash === -1 ? "" : filePath.slice(0, lastSlash);
+    const name = lastSlash === -1 ? filePath : filePath.slice(lastSlash + 1);
+    const parent = getOrCreateFolder(parentPath);
+    parent.children.push({ type: "file", name, path: filePath });
+  }
+
+  sortTreeChildren(root);
+  return root;
+}
+
+function sortTreeChildren(node) {
+  node.children.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  for (const child of node.children) {
+    if (child.type === "folder") sortTreeChildren(child);
+  }
+}
+
+/** Builds a path -> node lookup for the whole tree (root included, keyed by ""). */
+function indexFileTree(node, map = new Map()) {
+  map.set(node.path, node);
+  if (node.type === "folder") {
+    for (const child of node.children) indexFileTree(child, map);
+  }
+  return map;
+}
+
+/** All file (leaf) paths under `node`, in tree order. `node` itself may be a file or a folder. */
+function collectFilePaths(node, out = []) {
+  if (node.type === "file") {
+    out.push(node.path);
+    return out;
+  }
+  for (const child of node.children) collectFilePaths(child, out);
+  return out;
+}
+
+/**
+ * "checked" | "unchecked" | "indeterminate" for a file or folder node,
+ * derived from how many of its descendant files are in `checkedPaths`.
+ * A file node is simply "checked"/"unchecked" (never indeterminate).
+ */
+function getNodeCheckState(node, checkedPaths) {
+  if (node.type === "file") {
+    return checkedPaths.has(node.path) ? "checked" : "unchecked";
+  }
+  const filePaths = collectFilePaths(node);
+  if (filePaths.length === 0) return "unchecked";
+  let checkedCount = 0;
+  for (const p of filePaths) {
+    if (checkedPaths.has(p)) checkedCount++;
+  }
+  if (checkedCount === 0) return "unchecked";
+  if (checkedCount === filePaths.length) return "checked";
+  return "indeterminate";
+}
+
+/**
+ * Returns a NEW checked-paths Set with every file under `node` (or just
+ * `node` itself, if it's a file) added (checked=true) or removed
+ * (checked=false). Checking/unchecking a folder always applies to ALL of
+ * its descendants, regardless of their current individual state.
+ */
+function setNodeChecked(node, checked, checkedPaths) {
+  const next = new Set(checkedPaths);
+  const filePaths = node.type === "file" ? [node.path] : collectFilePaths(node);
+  for (const p of filePaths) {
+    if (checked) next.add(p);
+    else next.delete(p);
+  }
+  return next;
+}
+
+/** Only the files whose path is in `checkedPaths` - what actually reaches scanFiles(). */
+function filterFilesByCheckedPaths(files, checkedPaths) {
+  return files.filter((f) => checkedPaths.has(f.path));
+}
+
+// ---------------------------------------------------------------------
 // File System Access API directory walking (Phase 5) - pure, storage-
 // and DOM-independent logic for recursively reading a
 // FileSystemDirectoryHandle's contents into the same {path, content}
@@ -1030,6 +1156,9 @@ if (typeof module !== "undefined") {
     computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist,
     findKeyValue, quoteWrap, classifyFile,
     collectFilesFromDirectoryHandle,
+    SKIP_DIRS,
+    buildFileTree, indexFileTree, collectFilePaths,
+    getNodeCheckState, setNodeChecked, filterFilesByCheckedPaths,
     getBaseRuleSnapshot,
   };
 }

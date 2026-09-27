@@ -20,6 +20,8 @@ const {
   computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist, getBaseRuleSnapshot,
   findKeyValue, quoteWrap, classifyFile,
   collectFilesFromDirectoryHandle,
+  SKIP_DIRS, buildFileTree, indexFileTree, collectFilePaths,
+  getNodeCheckState, setNodeChecked, filterFilesByCheckedPaths,
 } = require(path.join(__dirname, "..", "scanner-engine.js"));
 const { buildFakeDirectory } = require(path.join(__dirname, "fake-fs-access.js"));
 
@@ -1063,6 +1065,165 @@ await test("end-to-end: files collected from a directory handle feed straight in
     assert.ok(!f.content.includes("fakeDirEndToEnd123"));
     assert.ok(!f.content.includes("fakeDirJsonKey456"));
   }
+});
+
+// -----------------------------------------------------------------------
+// PHASE 6 (checkpoint 1) - folder-filter tree: build, check-state, filter
+// -----------------------------------------------------------------------
+
+console.log("\nbuildFileTree() - flat path list -> nested tree:");
+
+await test("flat, single-level files - all become direct children of root, folders-first-then-alpha ordering", () => {
+  const tree = buildFileTree(["b.txt", "a.txt"]);
+  assert.strictEqual(tree.type, "folder");
+  assert.strictEqual(tree.path, "");
+  assert.strictEqual(tree.children.length, 2);
+  assert.deepStrictEqual(tree.children.map((c) => c.name), ["a.txt", "b.txt"]);
+  assert.ok(tree.children.every((c) => c.type === "file"));
+});
+
+await test("nested paths create the correct folder hierarchy, deduplicated (not one folder node per file)", () => {
+  const tree = buildFileTree(["src/app.py", "src/utils/helper.py", "src/utils/other.py", "README.md"]);
+  assert.strictEqual(tree.children.length, 2, "src/ folder + README.md at top level");
+  const [srcNode, readmeNode] = tree.children;
+  assert.strictEqual(srcNode.type, "folder");
+  assert.strictEqual(srcNode.path, "src");
+  assert.strictEqual(readmeNode.type, "file");
+  assert.strictEqual(readmeNode.path, "README.md");
+
+  assert.strictEqual(srcNode.children.length, 2, "app.py + utils/ - not duplicated per file");
+  const utilsNode = srcNode.children.find((c) => c.name === "utils");
+  assert.strictEqual(utilsNode.type, "folder");
+  assert.strictEqual(utilsNode.path, "src/utils");
+  assert.strictEqual(utilsNode.children.length, 2);
+  assert.deepStrictEqual(utilsNode.children.map((c) => c.path).sort(), ["src/utils/helper.py", "src/utils/other.py"]);
+});
+
+await test("folders sort before files at the same level, both alphabetically among themselves", () => {
+  const tree = buildFileTree(["zzz.txt", "aaa_folder/inner.txt", "mmm.txt"]);
+  assert.deepStrictEqual(tree.children.map((c) => c.name), ["aaa_folder", "mmm.txt", "zzz.txt"]);
+});
+
+await test("indexFileTree() finds any node (including root and nested folders) by exact path", () => {
+  const tree = buildFileTree(["src/utils/helper.py"]);
+  const index = indexFileTree(tree);
+  assert.strictEqual(index.get(""), tree);
+  assert.strictEqual(index.get("src").path, "src");
+  assert.strictEqual(index.get("src/utils").path, "src/utils");
+  assert.strictEqual(index.get("src/utils/helper.py").type, "file");
+});
+
+await test("collectFilePaths() returns every descendant file path, none of the folder paths themselves", () => {
+  const tree = buildFileTree(["a/1.txt", "a/b/2.txt", "3.txt"]);
+  assert.deepStrictEqual(collectFilePaths(tree).sort(), ["3.txt", "a/1.txt", "a/b/2.txt"]);
+});
+
+console.log("\ngetNodeCheckState()/setNodeChecked() - checkbox propagation:");
+
+await test("a folder is 'checked' only when every descendant file is in checkedPaths", () => {
+  const tree = buildFileTree(["a/1.txt", "a/2.txt"]);
+  const aNode = indexFileTree(tree).get("a");
+  assert.strictEqual(getNodeCheckState(aNode, new Set(["a/1.txt", "a/2.txt"])), "checked");
+});
+
+await test("a folder is 'unchecked' when none of its descendant files are in checkedPaths", () => {
+  const tree = buildFileTree(["a/1.txt", "a/2.txt"]);
+  const aNode = indexFileTree(tree).get("a");
+  assert.strictEqual(getNodeCheckState(aNode, new Set()), "unchecked");
+});
+
+await test("a folder is 'indeterminate' when SOME but not all descendant files are checked", () => {
+  const tree = buildFileTree(["a/1.txt", "a/2.txt", "a/3.txt"]);
+  const aNode = indexFileTree(tree).get("a");
+  assert.strictEqual(getNodeCheckState(aNode, new Set(["a/1.txt"])), "indeterminate");
+});
+
+await test("indeterminate propagates upward through multiple levels of nesting", () => {
+  const tree = buildFileTree(["a/b/c/1.txt", "a/b/c/2.txt", "a/other.txt"]);
+  const index = indexFileTree(tree);
+  const checked = new Set(["a/b/c/1.txt"]); // only one of three total files under 'a'
+  assert.strictEqual(getNodeCheckState(index.get("a/b/c"), checked), "indeterminate");
+  assert.strictEqual(getNodeCheckState(index.get("a/b"), checked), "indeterminate");
+  assert.strictEqual(getNodeCheckState(index.get("a"), checked), "indeterminate");
+});
+
+await test("checking a folder checks ALL of its descendants, regardless of their prior individual state", () => {
+  const tree = buildFileTree(["a/1.txt", "a/2.txt", "a/b/3.txt"]);
+  const aNode = indexFileTree(tree).get("a");
+  const before = new Set(["a/1.txt"]); // 2.txt and b/3.txt currently unchecked
+  const after = setNodeChecked(aNode, true, before);
+  assert.deepStrictEqual([...after].sort(), ["a/1.txt", "a/2.txt", "a/b/3.txt"]);
+  // Original Set passed in must be untouched (never mutated in place).
+  assert.deepStrictEqual([...before], ["a/1.txt"]);
+});
+
+await test("unchecking a folder unchecks ALL of its descendants", () => {
+  const tree = buildFileTree(["a/1.txt", "a/2.txt", "a/b/3.txt"]);
+  const aNode = indexFileTree(tree).get("a");
+  const before = new Set(["a/1.txt", "a/2.txt", "a/b/3.txt", "outside.txt"]);
+  const after = setNodeChecked(aNode, false, before);
+  assert.deepStrictEqual([...after], ["outside.txt"]);
+});
+
+await test("unchecking one file makes its parent folder indeterminate, not unchecked", () => {
+  const tree = buildFileTree(["a/1.txt", "a/2.txt"]);
+  const index = indexFileTree(tree);
+  const fileNode = index.get("a/1.txt");
+  const allChecked = new Set(["a/1.txt", "a/2.txt"]);
+  const afterUncheckOne = setNodeChecked(fileNode, false, allChecked);
+  assert.strictEqual(getNodeCheckState(index.get("a"), afterUncheckOne), "indeterminate");
+});
+
+await test("checking every individual file back makes the folder fully 'checked' again", () => {
+  const tree = buildFileTree(["a/1.txt", "a/2.txt"]);
+  const index = indexFileTree(tree);
+  let checked = new Set(["a/1.txt"]);
+  assert.strictEqual(getNodeCheckState(index.get("a"), checked), "indeterminate");
+  checked = setNodeChecked(index.get("a/2.txt"), true, checked);
+  assert.strictEqual(getNodeCheckState(index.get("a"), checked), "checked");
+});
+
+console.log("\nfilterFilesByCheckedPaths() - scan integration:");
+
+await test("only checked paths are passed through, in their original order", () => {
+  const files = [
+    { path: "a.txt", content: "x" },
+    { path: "b.txt", content: "y" },
+    { path: "c.txt", content: "z" },
+  ];
+  const filtered = filterFilesByCheckedPaths(files, new Set(["a.txt", "c.txt"]));
+  assert.deepStrictEqual(filtered.map((f) => f.path), ["a.txt", "c.txt"]);
+});
+
+await test("end-to-end: unchecking a folder in the tree actually excludes its files from scanFiles()", () => {
+  const files = [
+    { path: "keep/app.properties", content: "password=fakeKeepThis123" },
+    { path: "exclude/secrets.properties", content: "api_key=fakeShouldNotAppear456" },
+  ];
+  const tree = buildFileTree(files.map((f) => f.path));
+  const index = indexFileTree(tree);
+  let checked = new Set(files.map((f) => f.path)); // everything checked by default
+  checked = setNodeChecked(index.get("exclude"), false, checked);
+
+  const filtered = filterFilesByCheckedPaths(files, checked);
+  assert.strictEqual(filtered.length, 1);
+  assert.strictEqual(filtered[0].path, "keep/app.properties");
+
+  const { reportEntries, sanitizedFiles } = scanFiles(filtered);
+  assert.strictEqual(reportEntries.length, 1, "the excluded file was never even handed to scanFiles()");
+  assert.strictEqual(sanitizedFiles.length, 1);
+  assert.strictEqual(sanitizedFiles[0].path, "keep/app.properties");
+});
+
+await test("SKIP_DIRS is exported and matches what scanFiles() itself actually skips (single source of truth for the tree to filter the same way)", () => {
+  assert.ok(SKIP_DIRS.has("node_modules"));
+  assert.ok(SKIP_DIRS.has(".git"));
+  const files = [
+    { path: "node_modules/pkg/index.js", content: "const password = 'shouldNeverBeScanned';" },
+    { path: "app.js", content: "const password = 'fakeShouldBeScanned123';" },
+  ];
+  const { reportEntries } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 1, "scanFiles() itself already skips SKIP_DIRS content");
 });
 
 // -----------------------------------------------------------------------
