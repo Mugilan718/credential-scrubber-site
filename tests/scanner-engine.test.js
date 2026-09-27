@@ -22,6 +22,7 @@ const {
   collectFilesFromDirectoryHandle,
   SKIP_DIRS, buildFileTree, indexFileTree, collectFilePaths,
   getNodeCheckState, setNodeChecked, filterFilesByCheckedPaths,
+  reapplySavedSelection,
 } = require(path.join(__dirname, "..", "scanner-engine.js"));
 const { buildFakeDirectory } = require(path.join(__dirname, "fake-fs-access.js"));
 
@@ -1224,6 +1225,70 @@ await test("SKIP_DIRS is exported and matches what scanFiles() itself actually s
   ];
   const { reportEntries } = scanFiles(files);
   assert.strictEqual(reportEntries.length, 1, "scanFiles() itself already skips SKIP_DIRS content");
+});
+
+// -----------------------------------------------------------------------
+// Folder-filter tree (checkpoint 2) - reapplySavedSelection
+// -----------------------------------------------------------------------
+
+await test("reapplySavedSelection: a matched path that was checked before stays checked", () => {
+  const result = reapplySavedSelection(
+    ["a.txt", "b.txt"],
+    ["a.txt", "b.txt"],
+    ["a.txt", "b.txt"]
+  );
+  assert.deepStrictEqual([...result].sort(), ["a.txt", "b.txt"]);
+});
+
+await test("reapplySavedSelection: a matched path that was UNCHECKED before stays unchecked (not silently defaulted to checked)", () => {
+  const result = reapplySavedSelection(
+    ["a.txt", "b.txt"],
+    ["a.txt", "b.txt"], // both existed before
+    ["a.txt"]           // only a.txt was checked
+  );
+  assert.deepStrictEqual([...result], ["a.txt"]);
+});
+
+await test("reapplySavedSelection: a saved path that no longer exists is simply absent from the result", () => {
+  const result = reapplySavedSelection(
+    ["a.txt"], // b.txt no longer present this time
+    ["a.txt", "b.txt"],
+    ["a.txt", "b.txt"]
+  );
+  assert.deepStrictEqual([...result], ["a.txt"]);
+});
+
+await test("reapplySavedSelection: a genuinely new path (never seen in the saved selection) defaults to checked", () => {
+  const result = reapplySavedSelection(
+    ["a.txt", "new.txt"],
+    ["a.txt"],
+    ["a.txt"]
+  );
+  assert.deepStrictEqual([...result].sort(), ["a.txt", "new.txt"]);
+});
+
+await test("reapplySavedSelection: mixed matched/missing/new paths all resolve independently in one call", () => {
+  const result = reapplySavedSelection(
+    ["kept-checked.txt", "kept-unchecked.txt", "brand-new.txt"], // missing.txt absent this time
+    ["kept-checked.txt", "kept-unchecked.txt", "missing.txt"],
+    ["kept-checked.txt", "missing.txt"]
+  );
+  assert.deepStrictEqual([...result].sort(), ["brand-new.txt", "kept-checked.txt"]);
+});
+
+await test("reapplySavedSelection: never mutates any of its input arrays", () => {
+  const currentPaths = ["a.txt", "b.txt"];
+  const savedAllPaths = ["a.txt", "b.txt"];
+  const savedCheckedPaths = ["a.txt"];
+  reapplySavedSelection(currentPaths, savedAllPaths, savedCheckedPaths);
+  assert.deepStrictEqual(currentPaths, ["a.txt", "b.txt"]);
+  assert.deepStrictEqual(savedAllPaths, ["a.txt", "b.txt"]);
+  assert.deepStrictEqual(savedCheckedPaths, ["a.txt"]);
+});
+
+await test("reapplySavedSelection: an empty saved selection (first-ever visit) defaults every current path to checked", () => {
+  const result = reapplySavedSelection(["a.txt", "b.txt"], [], []);
+  assert.deepStrictEqual([...result].sort(), ["a.txt", "b.txt"]);
 });
 
 // -----------------------------------------------------------------------

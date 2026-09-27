@@ -36,6 +36,9 @@
   const deselectAllBtn = document.getElementById("deselectAllBtn");
   const scanSelectedBtn = document.getElementById("scanSelectedBtn");
   const cancelTreeBtn = document.getElementById("cancelTreeBtn");
+  const folderFilterPromptState = document.getElementById("folderFilterPromptState");
+  const useLastSelectionBtn = document.getElementById("useLastSelectionBtn");
+  const useFreshSelectionBtn = document.getElementById("useFreshSelectionBtn");
 
   // File System Access API (Phase 5) - Chromium-based browsers only today
   // (not Firefox/Safari). Feature-detected, never assumed - everything
@@ -59,6 +62,13 @@
   let expandedFolders = new Set();
   let pendingReadable = [];
   let pendingRawFilesForZip = [];
+  // All paths seen this time round (before any filtering choice) and the
+  // saved filter record (if any) a saved-selection prompt is currently
+  // deciding between - both cleared once the user picks "use last"/"start
+  // fresh" or cancels. See ScannerStorage.saveFolderFilter/getFolderFilter
+  // and scanner-engine.js's reapplySavedSelection().
+  let pendingAllPaths = [];
+  let pendingSavedFilter = null;
 
   // This browser's local rule overrides (Phase 4) - loaded once at
   // startup, kept in memory, and persisted back to IndexedDB after every
@@ -193,6 +203,7 @@
     scanningState.classList.remove("hidden");
     resultsState.classList.add("hidden");
     if (folderTreeState) folderTreeState.classList.add("hidden");
+    if (folderFilterPromptState) folderFilterPromptState.classList.add("hidden");
 
     const files = Array.from(fileList);
     scanningText.textContent = `Reading ${files.length} files…`;
@@ -216,16 +227,19 @@
       }
     }
 
-    presentFolderTree(readable, rawFilesForZip);
+    await presentFolderTree(readable, rawFilesForZip);
   }
 
   /**
-   * Shows the folder-filter tree (checkpoint 1: everything checked by
-   * default, every visit - checkpoint 2 adds remembering/reapplying a
-   * prior selection here). Does NOT scan yet - scanning happens only
-   * once the user confirms via "Scan selected files".
+   * Shows the folder-filter tree. Everything is checked by default UNLESS
+   * a saved filter selection exists from a previous scan of an overlapping
+   * set of paths (checkpoint 2) - in that case the user is asked first via
+   * the "use last selection / start fresh" prompt, and the tree is only
+   * shown (with the saved or fresh selection applied) once they answer.
+   * Does NOT scan yet - scanning happens only once the user confirms via
+   * "Scan selected files".
    */
-  function presentFolderTree(readable, rawFilesForZip) {
+  async function presentFolderTree(readable, rawFilesForZip) {
     // scanFiles() silently drops any path under a SKIP_DIRS segment
     // (.git, node_modules, etc.) regardless of what's checked - filtering
     // them out of the tree too keeps "N of M files selected" honest and
@@ -236,22 +250,59 @@
     pendingRawFilesForZip = rawFilesForZip.filter(notSkipped);
 
     const allPaths = pendingReadable.map((f) => f.path).concat(pendingRawFilesForZip.map((f) => f.path));
+    pendingAllPaths = allPaths;
     currentTree = buildFileTree(allPaths);
     treeIndex = indexFileTree(currentTree);
-    checkedPaths = new Set(allPaths); // everything included by default
+    checkedPaths = new Set(allPaths); // everything included by default, until a saved filter says otherwise
     expandedFolders = new Set(); // top-level only, expand on demand - see renderTree()
 
     scanningState.classList.add("hidden");
     resultsState.classList.add("hidden");
     dropZone.classList.add("hidden");
-    if (folderTreeState) {
-      folderTreeState.classList.remove("hidden");
-      renderTree();
-    } else {
+
+    if (!folderTreeState) {
       // No tree UI available for some reason - fall back to scanning
       // everything, rather than leaving the user stuck on a blank page.
-      scanReadableFiles(pendingReadable, pendingRawFilesForZip);
+      await scanReadableFiles(pendingReadable, pendingRawFilesForZip);
+      return;
     }
+
+    const db = await getDb();
+    const savedFilter = db ? await ScannerStorage.getFolderFilter(db) : null;
+    if (savedFilter && folderFilterPromptState) {
+      pendingSavedFilter = savedFilter;
+      folderFilterPromptState.classList.remove("hidden");
+      return; // wait for the user to choose "use last" or "start fresh"
+    }
+
+    folderTreeState.classList.remove("hidden");
+    renderTree();
+  }
+
+  if (useLastSelectionBtn) {
+    useLastSelectionBtn.addEventListener("click", () => {
+      if (pendingSavedFilter) {
+        checkedPaths = reapplySavedSelection(pendingAllPaths, pendingSavedFilter.allPaths, pendingSavedFilter.checkedPaths);
+      }
+      pendingSavedFilter = null;
+      if (folderFilterPromptState) folderFilterPromptState.classList.add("hidden");
+      if (folderTreeState) {
+        folderTreeState.classList.remove("hidden");
+        renderTree();
+      }
+    });
+  }
+
+  if (useFreshSelectionBtn) {
+    useFreshSelectionBtn.addEventListener("click", () => {
+      checkedPaths = new Set(pendingAllPaths); // everything checked
+      pendingSavedFilter = null;
+      if (folderFilterPromptState) folderFilterPromptState.classList.add("hidden");
+      if (folderTreeState) {
+        folderTreeState.classList.remove("hidden");
+        renderTree();
+      }
+    });
   }
 
   /**
@@ -356,6 +407,12 @@
       if (folderTreeState) folderTreeState.classList.add("hidden");
       scanningState.classList.remove("hidden");
       scanningText.textContent = "Scanning selected files…";
+
+      // Remember this selection for next time - same local-only storage
+      // approach as scan history/ignores (see storage.js's module comment).
+      const db = await getDb();
+      if (db) await ScannerStorage.saveFolderFilter(db, pendingAllPaths, Array.from(checkedPaths));
+
       const filteredReadable = filterFilesByCheckedPaths(pendingReadable, checkedPaths);
       const filteredRaw = filterFilesByCheckedPaths(pendingRawFilesForZip, checkedPaths);
       await scanReadableFiles(filteredReadable, filteredRaw);
@@ -365,9 +422,12 @@
   if (cancelTreeBtn) {
     cancelTreeBtn.addEventListener("click", () => {
       if (folderTreeState) folderTreeState.classList.add("hidden");
+      if (folderFilterPromptState) folderFilterPromptState.classList.add("hidden");
       dropZone.classList.remove("hidden");
       pendingReadable = [];
       pendingRawFilesForZip = [];
+      pendingAllPaths = [];
+      pendingSavedFilter = null;
       currentTree = null;
     });
   }
@@ -726,13 +786,14 @@
     scanningState.classList.remove("hidden");
     resultsState.classList.add("hidden");
     if (folderTreeState) folderTreeState.classList.add("hidden");
+    if (folderFilterPromptState) folderFilterPromptState.classList.add("hidden");
     scanningText.textContent = "Reading remembered folder…";
 
     const { files: readable } = await collectFilesFromDirectoryHandle(handle, {
       maxFileBytes: MAX_FILE_BYTES,
       isBinaryByName,
     });
-    presentFolderTree(readable, []);
+    await presentFolderTree(readable, []);
   }
 
   if (pickRememberedFolderBtn) {
@@ -823,6 +884,8 @@
     lastFilesScanned = 0;
     pendingReadable = [];
     pendingRawFilesForZip = [];
+    pendingAllPaths = [];
+    pendingSavedFilter = null;
     currentTree = null;
     resultsState.classList.add("hidden");
     dropZone.classList.remove("hidden");
@@ -847,5 +910,6 @@
       else expandedFolders.delete(path);
       renderTree();
     },
+    isPromptVisible: () => !!(folderFilterPromptState && !folderFilterPromptState.classList.contains("hidden")),
   };
 })();

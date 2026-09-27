@@ -965,6 +965,40 @@ function filterFilesByCheckedPaths(files, checkedPaths) {
   return files.filter((f) => checkedPaths.has(f.path));
 }
 
+/**
+ * Reapplies a saved folder-filter selection onto a freshly-read list of
+ * paths (folder-filter tree, checkpoint 2). `savedAllPaths` and
+ * `savedCheckedPaths` come from a previous saveFolderFilter() call;
+ * `currentPaths` is every path just read from disk this time.
+ *
+ * Three cases, decided per current path:
+ *   - matched + was checked before   -> stays checked
+ *   - matched + was NOT checked before -> stays unchecked (this is why
+ *     `savedAllPaths` has to be stored, not just the checked subset - a
+ *     path that existed-but-was-unchecked would otherwise be
+ *     indistinguishable from a path that's genuinely new)
+ *   - not in savedAllPaths (genuinely new, e.g. a file added since the
+ *     last scan) -> defaults to checked, same as the "everything checked"
+ *     default used the very first time a folder is selected
+ *
+ * A saved path that no longer exists in `currentPaths` is simply absent
+ * from the result - there's nothing to reapply it onto.
+ *
+ * Pure function: takes plain arrays/iterables of path strings, returns a
+ * new Set, never mutates any input.
+ */
+function reapplySavedSelection(currentPaths, savedAllPaths, savedCheckedPaths) {
+  const savedAllSet = new Set(savedAllPaths);
+  const savedCheckedSet = new Set(savedCheckedPaths);
+  const result = new Set();
+  for (const path of currentPaths) {
+    if (!savedAllSet.has(path) || savedCheckedSet.has(path)) {
+      result.add(path);
+    }
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------
 // File System Access API directory walking (Phase 5) - pure, storage-
 // and DOM-independent logic for recursively reading a
@@ -1159,6 +1193,7 @@ if (typeof module !== "undefined") {
     SKIP_DIRS,
     buildFileTree, indexFileTree, collectFilePaths,
     getNodeCheckState, setNodeChecked, filterFilesByCheckedPaths,
+    reapplySavedSelection,
     getBaseRuleSnapshot,
   };
 }

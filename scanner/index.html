@@ -135,6 +135,17 @@
     <p id="scanningText">Reading files…</p>
   </div>
 
+  <div id="folderFilterPromptState" class="folder-tree-state folder-filter-prompt-state hidden">
+    <div class="folder-tree-header">
+      <h2><svg class="icon icon-md panel-title-icon"><use href="#icon-folder"/></svg> Use your last selection?</h2>
+      <p>You have a saved file selection from a previous scan of this folder. Reuse it, or start fresh with everything checked?</p>
+    </div>
+    <div class="folder-tree-actions">
+      <button class="btn-glow" id="useLastSelectionBtn">Use last selection</button>
+      <button class="btn-ghost" id="useFreshSelectionBtn">Start fresh</button>
+    </div>
+  </div>
+
   <div id="folderTreeState" class="folder-tree-state hidden">
     <div class="folder-tree-header">
       <h2><svg class="icon icon-md panel-title-icon"><use href="#icon-folder"/></svg> Choose what to scan</h2>

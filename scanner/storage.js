@@ -28,29 +28,40 @@
  *     folder on a later visit without re-selecting it. Chromium-only (the
  *     File System Access API); see scanner-ui.js for the feature-detection
  *     and graceful-degradation handling on browsers without it.
+ *   - "folderFilter" (folder-filter tree, checkpoint 2): a single record
+ *     holding the last folder-scope selection - which relative paths
+ *     existed (`allPaths`) and which of those were checked
+ *     (`checkedPaths`), as plain path strings, never file content. Both
+ *     lists are needed (not just the checked one) so a later visit can
+ *     tell "existed before and was left unchecked" apart from "genuinely
+ *     new path" - see scanner-engine.js's reapplySavedSelection().
  *
  * This file contains no detection/redaction logic of its own - it is a
  * thin CRUD wrapper around IndexedDB. The logic that decides whether an
  * ignored finding should stay suppressed or reappear (hash comparison,
- * text restoration), and how rule overrides merge with the base ruleset,
- * lives in scanner-engine.js, which is pure and unit-tested under plain
- * Node; this file's IndexedDB calls can only be exercised in a real
+ * text restoration), how rule overrides merge with the base ruleset, and
+ * how a saved folder-filter selection reapplies to a freshly-read file
+ * list, lives in scanner-engine.js, which is pure and unit-tested under
+ * plain Node; this file's IndexedDB calls can only be exercised in a real
  * browser (or the fake IndexedDB test double used by tests/storage.test.js).
  *
  * DB_VERSION history: 1 (Phase 3 - scanHistory, ignores), 2 (Phase 4 -
- * adds ruleOverrides), 3 (Phase 5 - adds folderHandle). Bumping this
- * version is what makes an existing user's browser add the new store on
- * next load via onupgradeneeded, WITHOUT touching their existing data.
+ * adds ruleOverrides), 3 (Phase 5 - adds folderHandle), 4 (folder-filter
+ * tree checkpoint 2 - adds folderFilter). Bumping this version is what
+ * makes an existing user's browser add the new store on next load via
+ * onupgradeneeded, WITHOUT touching their existing data.
  */
 
 const DB_NAME = "credential-scrubber-scanner";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const SCAN_HISTORY_STORE = "scanHistory";
 const IGNORES_STORE = "ignores";
 const RULE_OVERRIDES_STORE = "ruleOverrides";
 const RULE_OVERRIDES_ID = "default"; // single record - this is per-browser session config, not a list
 const FOLDER_HANDLE_STORE = "folderHandle";
 const FOLDER_HANDLE_ID = "default"; // single record - one remembered folder at a time
+const FOLDER_FILTER_STORE = "folderFilter";
+const FOLDER_FILTER_ID = "default"; // single record - one saved selection at a time
 
 function promisifyRequest(request) {
   return new Promise((resolve, reject) => {
@@ -75,6 +86,9 @@ function openScannerDB() {
       }
       if (!db.objectStoreNames.contains(FOLDER_HANDLE_STORE)) {
         db.createObjectStore(FOLDER_HANDLE_STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(FOLDER_FILTER_STORE)) {
+        db.createObjectStore(FOLDER_FILTER_STORE, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -205,12 +219,45 @@ async function clearFolderHandle(db) {
   await promisifyRequest(tx.objectStore(FOLDER_HANDLE_STORE).delete(FOLDER_HANDLE_ID));
 }
 
+/**
+ * Saves the last folder-scope selection made in the folder-filter tree, as
+ * plain relative path strings only - never file content. `allPaths` is the
+ * full set of paths that existed at save time and `checkedPaths` is the
+ * subset that were checked; both are needed so a later visit can tell a
+ * path that existed-but-was-unchecked apart from a path that's genuinely
+ * new (see scanner-engine.js's reapplySavedSelection()).
+ */
+async function saveFolderFilter(db, allPaths, checkedPaths) {
+  const tx = db.transaction(FOLDER_FILTER_STORE, "readwrite");
+  const record = {
+    id: FOLDER_FILTER_ID,
+    allPaths: Array.from(allPaths),
+    checkedPaths: Array.from(checkedPaths),
+    savedAt: Date.now(),
+  };
+  await promisifyRequest(tx.objectStore(FOLDER_FILTER_STORE).put(record));
+  return record;
+}
+
+/** Returns the saved { allPaths, checkedPaths } record, or null if none saved. */
+async function getFolderFilter(db) {
+  const tx = db.transaction(FOLDER_FILTER_STORE, "readonly");
+  const record = await promisifyRequest(tx.objectStore(FOLDER_FILTER_STORE).get(FOLDER_FILTER_ID));
+  return record || null;
+}
+
+async function clearFolderFilter(db) {
+  const tx = db.transaction(FOLDER_FILTER_STORE, "readwrite");
+  await promisifyRequest(tx.objectStore(FOLDER_FILTER_STORE).delete(FOLDER_FILTER_ID));
+}
+
 const ScannerStorage = {
   openScannerDB, ignoreKeyFor,
   saveScanHistoryEntry, listScanHistory, clearScanHistory,
   setIgnore, removeIgnore, getIgnoreMap,
   getRuleOverrides, saveRuleOverrides, resetRuleOverrides,
   saveFolderHandle, getFolderHandle, clearFolderHandle,
+  saveFolderFilter, getFolderFilter, clearFolderFilter,
 };
 
 if (typeof window !== "undefined") {

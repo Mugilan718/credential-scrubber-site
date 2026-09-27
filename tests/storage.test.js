@@ -19,6 +19,7 @@ const {
   setIgnore, removeIgnore, getIgnoreMap,
   getRuleOverrides, saveRuleOverrides, resetRuleOverrides,
   saveFolderHandle, getFolderHandle, clearFolderHandle,
+  saveFolderFilter, getFolderFilter, clearFolderFilter,
 } = require(path.join(__dirname, "..", "scanner", "storage.js"));
 
 let passed = 0;
@@ -315,6 +316,95 @@ await test("an existing v2 database (no folderHandle store) upgrades to v3 witho
   await saveFolderHandle(dbV3, { kind: "directory", name: "new-store-works" }, "new-store-works");
   const record = await getFolderHandle(dbV3);
   assert.strictEqual(record.name, "new-store-works");
+});
+
+console.log("\nFolder filter selection (checkpoint 2):");
+
+await test("getFolderFilter() returns null when nothing has been saved yet", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  const record = await getFolderFilter(db);
+  assert.strictEqual(record, null);
+});
+
+await test("saveFolderFilter() + getFolderFilter() round-trips both the full path list and the checked subset", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  await saveFolderFilter(db, ["a.txt", "b.txt", "c.txt"], ["a.txt", "c.txt"]);
+  const record = await getFolderFilter(db);
+  assert.deepStrictEqual(record.allPaths, ["a.txt", "b.txt", "c.txt"]);
+  assert.deepStrictEqual(record.checkedPaths, ["a.txt", "c.txt"]);
+});
+
+await test("saveFolderFilter() accepts Sets directly (not just arrays), same as callers pass checkedPaths", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  await saveFolderFilter(db, new Set(["a.txt", "b.txt"]), new Set(["a.txt"]));
+  const record = await getFolderFilter(db);
+  assert.deepStrictEqual(record.allPaths, ["a.txt", "b.txt"]);
+  assert.deepStrictEqual(record.checkedPaths, ["a.txt"]);
+});
+
+await test("saveFolderFilter() overwrites the previously saved selection (single record, not a list)", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  await saveFolderFilter(db, ["a.txt"], ["a.txt"]);
+  await saveFolderFilter(db, ["b.txt"], []);
+  const record = await getFolderFilter(db);
+  assert.deepStrictEqual(record.allPaths, ["b.txt"]);
+  assert.deepStrictEqual(record.checkedPaths, []);
+});
+
+await test("clearFolderFilter() forgets the saved selection", async () => {
+  resetFakeIndexedDB();
+  const db = await openScannerDB();
+  await saveFolderFilter(db, ["a.txt"], ["a.txt"]);
+  await clearFolderFilter(db);
+  assert.strictEqual(await getFolderFilter(db), null);
+});
+
+await test("folder filter selection persists after closing and reopening the 'tab'", async () => {
+  resetFakeIndexedDB();
+  const dbBeforeClose = await openScannerDB();
+  await saveFolderFilter(dbBeforeClose, ["a.txt", "b.txt"], ["a.txt"]);
+  const dbAfterReopen = await openScannerDB();
+  const record = await getFolderFilter(dbAfterReopen);
+  assert.deepStrictEqual(record.checkedPaths, ["a.txt"]);
+});
+
+await test("an existing v3 database (no folderFilter store) upgrades to v4 without losing data, and gains a working folderFilter store", async () => {
+  resetFakeIndexedDB();
+
+  // Manually open at v3 with only the four pre-existing stores, exactly as
+  // an existing user's browser would already have on disk.
+  const dbV3 = await new Promise((resolve, reject) => {
+    const req = indexedDB.open("credential-scrubber-scanner", 3);
+    req.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      db.createObjectStore("scanHistory", { keyPath: "id", autoIncrement: true });
+      db.createObjectStore("ignores", { keyPath: "ignoreKey" });
+      db.createObjectStore("ruleOverrides", { keyPath: "id" });
+      db.createObjectStore("folderHandle", { keyPath: "id" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  await new Promise((resolve, reject) => {
+    const tx = dbV3.transaction("folderHandle", "readwrite");
+    const r = tx.objectStore("folderHandle").put({ id: "default", handle: { kind: "directory", name: "preexisting" }, name: "preexisting" });
+    r.onsuccess = () => resolve();
+    r.onerror = () => reject(r.error);
+  });
+
+  // Checkpoint 2's code loads and calls storage.js's openScannerDB() - now
+  // requesting v4.
+  const dbV4 = await openScannerDB();
+  const remembered = await getFolderHandle(dbV4);
+  assert.strictEqual(remembered.name, "preexisting", "pre-existing Phase 5 remembered folder survived the upgrade");
+
+  await saveFolderFilter(dbV4, ["new-store-works.txt"], ["new-store-works.txt"]);
+  const record = await getFolderFilter(dbV4);
+  assert.deepStrictEqual(record.checkedPaths, ["new-store-works.txt"]);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
