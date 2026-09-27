@@ -18,6 +18,12 @@
  *     "config.json": '{"password": "fake123"}',
  *     "src": { "app.py": "password = 'fake456'" },
  *   })
+ *
+ * A file's value may also be a function returning a string, read live on
+ * every getFile() call instead of once at build time - lets a test mutate
+ * shared state between two reads of the SAME handle to simulate an
+ * on-disk edit between them (e.g. proving "Scan again"'s fresh-read path
+ * actually re-reads, unlike the in-memory path).
  */
 
 function makeFileHandle(name, content) {
@@ -25,10 +31,11 @@ function makeFileHandle(name, content) {
     kind: "file",
     name,
     async getFile() {
+      const currentContent = typeof content === "function" ? content() : content;
       return {
-        size: Buffer.byteLength(content, "utf8"),
+        size: Buffer.byteLength(currentContent, "utf8"),
         async text() {
-          return content;
+          return currentContent;
         },
       };
     },
@@ -37,7 +44,7 @@ function makeFileHandle(name, content) {
 
 function makeDirectoryHandle(name, tree) {
   const entries = Object.entries(tree).map(([childName, value]) => {
-    if (typeof value === "string") {
+    if (typeof value === "string" || typeof value === "function") {
       return makeFileHandle(childName, value);
     }
     return makeDirectoryHandle(childName, value);

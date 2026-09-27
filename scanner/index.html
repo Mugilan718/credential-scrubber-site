@@ -174,9 +174,11 @@
       <div><strong id="filesScannedCount">0</strong><span>files scanned</span></div>
       <div><strong id="redactionCount">0</strong><span>redactions</span></div>
       <button class="btn-glow" id="downloadBtn">Download sanitized copy (.zip)</button>
-      <button class="btn-ghost" id="startOverBtn">Scan another folder</button>
+      <button class="btn-ghost" id="scanAgainBtn"><svg class="icon"><use href="#icon-clock"/></svg> Scan again</button>
+      <button class="btn-ghost" id="startOverBtn">Choose different folder</button>
     </div>
 
+    <p id="scanAgainSourceNote" class="ignore-note hidden"></p>
     <p class="ignore-note">Ignoring a finding restores the original, unmasked value in this working copy and is remembered on this device only — see "Ignored findings" below to review or undo it.</p>
     <div id="resultsTable" class="results-table"></div>
   </div>
@@ -247,6 +249,7 @@
       <li>No git-diff/changed-files scanning here — every scan is a full pass over whatever folder you give it. (The downloadable desktop app has a git changed-files mode.)</li>
       <li>An unquoted YAML value's mask isn't force-quoted the way the desktop app does it. A bare <code>*</code> is YAML's alias syntax, so redacting an unquoted YAML scalar can, in rare cases, produce invalid YAML.</li>
       <li>Scan history, the ignore list, and any rule edits are stored only in this one browser, on this one device — nothing syncs across browsers or devices, and it's lost if you clear this site's browser data.</li>
+      <li>"Scan again" re-reads the folder fresh from disk only when it was opened via "Remember a folder for next time" (Chrome/Edge's File System Access API). For a folder provided by drag-and-drop or "Choose folder," there's no way to silently re-read it, so "Scan again" re-scans the same in-memory copy — edits made on disk since then won't be reflected until you choose the folder again.</li>
     </ul>
   </section>
 

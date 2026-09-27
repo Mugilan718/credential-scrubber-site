@@ -1145,6 +1145,63 @@ await test("end-to-end: files collected from a directory handle feed straight in
   }
 });
 
+console.log("\n\"Scan again\" (Phase A) - persistent-handle fresh-read vs in-memory re-scan:");
+
+await test("persistent-handle path: re-calling collectFilesFromDirectoryHandle() on the SAME handle picks up an on-disk edit", async () => {
+  let currentContent = "api_key=fakeBeforeEdit111";
+  const dir = buildFakeDirectory({ "app.properties": () => currentContent });
+
+  const firstRead = await collectFilesFromDirectoryHandle(dir);
+  assert.strictEqual(firstRead.files[0].content, "api_key=fakeBeforeEdit111");
+  const firstScan = scanFiles(firstRead.files);
+  assert.strictEqual(firstScan.reportEntries[0].before, "fakeBeforeEdit111");
+
+  // Simulate an edit made to the file on disk, between the first and
+  // second "scan" - a genuinely fresh read of the SAME handle must see it.
+  currentContent = "api_key=fakeAfterEdit222";
+
+  const secondRead = await collectFilesFromDirectoryHandle(dir);
+  assert.strictEqual(secondRead.files[0].content, "api_key=fakeAfterEdit222", "the fresh re-read picked up the on-disk edit");
+  const secondScan = scanFiles(secondRead.files);
+  assert.strictEqual(secondScan.reportEntries[0].before, "fakeAfterEdit222");
+});
+
+await test("in-memory path: re-scanning the SAME already-loaded file contents never reflects a later edit (no re-read happens)", () => {
+  // This models handleFileList()'s drag-and-drop/file-input path: content
+  // is read into memory ONCE (readFileAsText(), outside the engine
+  // entirely), and "Scan again" for this path just re-runs scanFiles() on
+  // that same already-loaded array - there is no second read to pick up
+  // an edit, unlike the persistent-handle path above. This is exactly the
+  // property scanAgainSourceNote's disclosure text depends on being true.
+  const inMemoryFiles = [{ path: "app.properties", content: "api_key=fakeLoadedOnce333" }];
+
+  const firstScan = scanFiles(inMemoryFiles);
+  assert.strictEqual(firstScan.reportEntries[0].before, "fakeLoadedOnce333");
+
+  // The "file on disk" changes here, but nothing re-reads it - the
+  // in-memory re-scan below can only ever see what's already in `inMemoryFiles`.
+  const secondScan = scanFiles(inMemoryFiles); // "Scan again" on the same in-memory array
+  assert.strictEqual(secondScan.reportEntries[0].before, "fakeLoadedOnce333", "still the original in-memory content - no fresh read occurred");
+});
+
+await test("\"Scan again\" preserves the filter selection: filterFilesByCheckedPaths() applied again with the SAME checkedPaths, not reset to everything", () => {
+  const files = [
+    { path: "keep/a.properties", content: "x" },
+    { path: "exclude/b.properties", content: "y" },
+  ];
+  const checkedPaths = new Set(["keep/a.properties"]); // exclude/b.properties was unchecked before "Scan again"
+
+  // First scan (already filtered).
+  const firstFiltered = filterFilesByCheckedPaths(files, checkedPaths);
+  assert.deepStrictEqual(firstFiltered.map((f) => f.path), ["keep/a.properties"]);
+
+  // "Scan again" - same checkedPaths, reapplied to a fresh (here,
+  // identical) file list, exactly as scanAgainBtn's handler does by never
+  // touching checkedPaths itself.
+  const secondFiltered = filterFilesByCheckedPaths(files, checkedPaths);
+  assert.deepStrictEqual(secondFiltered.map((f) => f.path), ["keep/a.properties"], "selection preserved, not reset to everything checked");
+});
+
 // -----------------------------------------------------------------------
 // PHASE 6 (checkpoint 1) - folder-filter tree: build, check-state, filter
 // -----------------------------------------------------------------------

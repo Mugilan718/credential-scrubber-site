@@ -9,6 +9,8 @@
   const redactionCount = document.getElementById("redactionCount");
   const resultsTable = document.getElementById("resultsTable");
   const downloadBtn = document.getElementById("downloadBtn");
+  const scanAgainBtn = document.getElementById("scanAgainBtn");
+  const scanAgainSourceNote = document.getElementById("scanAgainSourceNote");
   const startOverBtn = document.getElementById("startOverBtn");
   const placeholderModeToggle = document.getElementById("placeholderModeToggle");
   const scanHistoryPanel = document.getElementById("scanHistoryPanel");
@@ -54,6 +56,20 @@
   let lastSanitizedFiles = [];
   let lastReportEntries = [];
   let lastFilesScanned = 0;
+
+  // How the CURRENT results' files were obtained, for "Scan again"
+  // (below): "handle" means a FileSystemDirectoryHandle (remembered
+  // folder, Phase 5) that can be re-read from disk on demand; "memory"
+  // means plain drag-and-drop/file-input File objects already read once,
+  // with no way to silently re-read them - see scanAgainBtn's handler and
+  // updateScanAgainSourceNote() for how this honesty distinction is
+  // surfaced to the user rather than silently glossed over.
+  let lastScanSource = null;
+  let lastScanHandle = null;
+  // One-time fallback message (e.g. a lapsed permission on the remembered
+  // handle) that should be shown by the NEXT updateScanAgainSourceNote()
+  // call and then cleared, rather than staying stuck on screen forever.
+  let scanAgainFallbackWarning = null;
 
   // Ignored-findings review list (revertible ignores) - scoped to the
   // CURRENT scan's results, not the whole browser session: reset whenever
@@ -219,6 +235,8 @@
   }
 
   async function handleFileList(fileList) {
+    lastScanSource = "memory";
+    lastScanHandle = null;
     dropZone.classList.add("hidden");
     scanningState.classList.remove("hidden");
     resultsState.classList.add("hidden");
@@ -459,13 +477,10 @@
    * scan-history persistence. `rawFilesForZip` carries through any
    * skipped binary/oversized files untouched, same as before.
    */
-  async function scanReadableFiles(readable, rawFilesForZip) {
-    // A fresh scan starts a fresh "ignored findings" review list - entries
-    // ignored while looking at a previous folder/scan aren't relevant here.
-    ignoredEntries = [];
-    renderIgnoredFindings();
-
-    scanningText.textContent = `Scanning ${readable.length} files…`;
+  async function scanReadableFiles(readable, rawFilesForZip, { isRescan = false } = {}) {
+    if (!isRescan) {
+      scanningText.textContent = `Scanning ${readable.length} files…`;
+    }
     // Yield to the browser so the "scanning" state actually paints before the
     // (synchronous, potentially CPU-heavy) scan runs.
     await new Promise((r) => setTimeout(r, 30));
@@ -487,8 +502,18 @@
     lastSanitizedFiles = scanResult.sanitizedFiles.concat(rawFilesForZip || []);
     lastReportEntries = scanResult.reportEntries;
     lastFilesScanned = readable.length;
+    // Reflects everything actually suppressed/restored in THIS pass -
+    // whether ignored earlier this session or persisted from a previous
+    // one - rather than being wiped on every scan regardless of whether
+    // those findings are still (correctly) hidden underneath. This also
+    // makes "Scan again" behave sensibly: a finding ignored before
+    // re-scanning stays visible in "Ignored findings," restorable, instead
+    // of vanishing from the list while remaining silently suppressed.
+    ignoredEntries = scanResult.restoredEntries || [];
+    renderIgnoredFindings();
 
     renderResults(lastFilesScanned, lastReportEntries);
+    updateScanAgainSourceNote();
 
     // Scan history stores only the SAFE report - file/line/rule/key - and
     // explicitly never the raw "before"/"after" values, even though those
@@ -502,6 +527,29 @@
         entries: safeEntries,
       });
       await refreshScanHistoryUI();
+    }
+  }
+
+  /**
+   * Surfaces the honesty distinction from "Scan again"'s doc comment: a
+   * memory-sourced scan can never silently reflect on-disk edits, so this
+   * stays visible the whole time such results are shown, not just right
+   * after clicking. A one-time fallback warning (lapsed handle permission)
+   * takes priority and is cleared after being shown once.
+   */
+  function updateScanAgainSourceNote() {
+    if (!scanAgainSourceNote) return;
+    if (scanAgainFallbackWarning) {
+      scanAgainSourceNote.textContent = scanAgainFallbackWarning;
+      scanAgainSourceNote.classList.remove("hidden");
+      scanAgainFallbackWarning = null;
+      return;
+    }
+    if (lastScanSource === "memory") {
+      scanAgainSourceNote.textContent = 'Re-scanning the same files already loaded — edits made since dropping this folder won\'t be reflected. Use "Choose different folder" to pick it again fresh.';
+      scanAgainSourceNote.classList.remove("hidden");
+    } else {
+      scanAgainSourceNote.classList.add("hidden");
     }
   }
 
@@ -895,6 +943,8 @@
   loadRememberedFolder();
 
   async function scanDirectoryHandle(handle) {
+    lastScanSource = "handle";
+    lastScanHandle = handle;
     dropZone.classList.add("hidden");
     scanningState.classList.remove("hidden");
     resultsState.classList.add("hidden");
@@ -990,6 +1040,62 @@
     downloadBtn.textContent = "Download sanitized copy (.zip)";
   });
 
+  // "Scan again" re-scans the SAME folder without reopening the filter
+  // tree, preserving checkedPaths as-is (requirement: keep the current
+  // filter selection). Behavior depends on how the folder was originally
+  // provided - see lastScanSource's doc comment above.
+  if (scanAgainBtn) {
+    scanAgainBtn.addEventListener("click", async () => {
+      resultsState.classList.add("hidden");
+      scanningState.classList.remove("hidden");
+
+      let usedFreshRead = false;
+      if (lastScanSource === "handle" && lastScanHandle) {
+        try {
+          // Permission is not guaranteed to persist - must be requested
+          // from within this click's user gesture, same as elsewhere in
+          // the Phase 5 remembered-folder flow.
+          let permission = await lastScanHandle.queryPermission({ mode: "read" });
+          if (permission !== "granted") {
+            permission = await lastScanHandle.requestPermission({ mode: "read" });
+          }
+          if (permission === "granted") {
+            scanningText.textContent = "Re-reading folder from disk…";
+            const { files: freshReadable } = await collectFilesFromDirectoryHandle(lastScanHandle, {
+              maxFileBytes: MAX_FILE_BYTES,
+              isBinaryByName,
+            });
+            const notSkipped = (f) => !f.path.split("/").some((seg) => SKIP_DIRS.has(seg));
+            pendingReadable = freshReadable.filter(notSkipped);
+            pendingRawFilesForZip = []; // handle-based reads never produce rawFilesForZip - see presentFolderTree()
+            pendingAllPaths = pendingReadable.map((f) => f.path);
+            currentTree = buildFileTree(pendingAllPaths);
+            treeIndex = indexFileTree(currentTree);
+            usedFreshRead = true;
+          } else {
+            scanAgainFallbackWarning = "Access to this folder was not granted, so this re-scan used the last loaded copy instead of reading fresh from disk.";
+          }
+        } catch (e) {
+          // Falls through to the in-memory re-scan below rather than
+          // leaving the user stuck - same graceful-degradation approach as
+          // the rest of the File System Access API integration (Phase 5).
+          scanAgainFallbackWarning = "Couldn't re-read this folder from disk (it may have moved or permission may have lapsed) - this re-scan used the last loaded copy instead.";
+        }
+      }
+
+      if (!usedFreshRead) {
+        scanningText.textContent = "Re-scanning already-loaded files…";
+      }
+
+      // checkedPaths is intentionally left untouched here - this is what
+      // preserves the current folder-filter selection across "Scan again,"
+      // rather than resetting to "everything checked."
+      const filteredReadable = filterFilesByCheckedPaths(pendingReadable, checkedPaths);
+      const filteredRaw = filterFilesByCheckedPaths(pendingRawFilesForZip, checkedPaths);
+      await scanReadableFiles(filteredReadable, filteredRaw, { isRescan: true });
+    });
+  }
+
   startOverBtn.addEventListener("click", () => {
     folderInput.value = "";
     lastSanitizedFiles = [];
@@ -1001,6 +1107,10 @@
     pendingSavedFilter = null;
     currentTree = null;
     ignoredEntries = [];
+    lastScanSource = null;
+    lastScanHandle = null;
+    scanAgainFallbackWarning = null;
+    if (scanAgainSourceNote) scanAgainSourceNote.classList.add("hidden");
     renderIgnoredFindings();
     resultsState.classList.add("hidden");
     dropZone.classList.remove("hidden");
@@ -1034,5 +1144,12 @@
       const f = lastSanitizedFiles.find((f) => f.path === path);
       return f ? f.content : null;
     },
+    getScanAgainSourceNote: () => ({
+      visible: !!(scanAgainSourceNote && !scanAgainSourceNote.classList.contains("hidden")),
+      text: scanAgainSourceNote ? scanAgainSourceNote.textContent : null,
+    }),
+    getLastScanSource: () => lastScanSource,
+    setLastScanHandle: (handle) => { lastScanHandle = handle; lastScanSource = "handle"; },
+    setLastScanSource: (source) => { lastScanSource = source; },
   };
 })();
