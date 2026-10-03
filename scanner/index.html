@@ -107,6 +107,13 @@
 <main class="scanner-main">
 
   <div id="dropZone" class="drop-zone">
+    <div class="shield-stage shield-idle" id="shieldIdle" aria-hidden="true">
+      <svg class="shield-visual" viewBox="0 0 24 24">
+        <circle class="shield-ring" cx="12" cy="12" r="10.6"/>
+        <path class="shield-shape" d="M12 2.5 4.5 5.5v5.5c0 5 3.2 8.5 7.5 10.5 4.3-2 7.5-5.5 7.5-10.5V5.5L12 2.5z"/>
+        <path class="shield-check" d="M8.5 12l2.3 2.3L15.8 9"/>
+      </svg>
+    </div>
     <div class="drop-icon"><svg class="icon icon-lg"><use href="#icon-folder"/></svg></div>
     <h1>Drop a project folder here</h1>
     <p>Or click to choose one. Scanning happens entirely on your device — nothing is sent anywhere, ever.</p>

@@ -97,6 +97,8 @@ a { color: inherit; }
 /* ---------- Drop zone ---------- */
 
 .drop-zone {
+  position: relative;
+  overflow: hidden;
   width: 100%;
   text-align: center;
   border: 2px dashed rgba(0,229,199,0.55);
@@ -105,6 +107,109 @@ a { color: inherit; }
   box-shadow: 0 0 60px rgba(0,229,199,0.1), inset 0 0 60px rgba(124,77,255,0.04);
   transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
   cursor: pointer;
+}
+
+/* ---------- Scanner shield centerpiece ----------
+   One recurring visual object, styled differently per real app state -
+   idle (dropzone, ambient backdrop), drag-over (brighter, dropzone),
+   scanning (foreground, in #scanningState), complete (foreground, in
+   #resultsState). States 1 & 2 need no JS at all: they're driven by the
+   existing .drop-zone / .drop-zone.drag-over classes dragenter/dragover/
+   dragleave/drop already toggle (see scanner-ui.js). */
+
+.shield-visual { width: 100%; height: 100%; overflow: visible; }
+
+.shield-shape {
+  fill: rgba(0,229,199,0.06);
+  stroke: var(--glow-cyan);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+  transition: fill 0.25s ease, stroke 0.25s ease;
+}
+
+.shield-check {
+  fill: none;
+  stroke: var(--glow-cyan);
+  stroke-width: 0.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.6;
+  transition: opacity 0.25s ease, stroke 0.25s ease;
+}
+
+.shield-ring {
+  fill: none;
+  stroke: var(--glow-violet);
+  stroke-width: 0.4;
+  stroke-dasharray: 2.2 2.6;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.22;
+}
+
+/* IDLE (in the drop-zone, ambient backdrop behind the folder icon/text) */
+.shield-stage {
+  z-index: 0;
+  pointer-events: none;
+}
+
+#shieldIdle.shield-stage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 210px;
+  height: 210px;
+  transform: translate(-50%, -50%);
+}
+
+.shield-idle .shield-shape {
+  filter: drop-shadow(0 0 16px rgba(0,229,199,0.35));
+  animation: shieldIdleBreathe 3.4s ease-in-out infinite;
+}
+
+.shield-idle .shield-ring {
+  animation: ringSpin 18s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes shieldIdleBreathe {
+  0%, 100% { opacity: 0.32; filter: drop-shadow(0 0 10px rgba(0,229,199,0.22)); }
+  50% { opacity: 0.55; filter: drop-shadow(0 0 20px rgba(0,229,199,0.4)); }
+}
+
+@keyframes ringSpin { to { transform: rotate(360deg); } }
+
+/* DRAG-OVER - a real dragenter/dragover on #dropZone already adds
+   .drag-over (see scanner-ui.js); this is purely a CSS reaction to it. */
+.drop-zone.drag-over .shield-shape {
+  fill: rgba(0,229,199,0.16);
+  stroke: var(--glow-cyan);
+  animation: shieldDragPulse 0.9s ease-in-out infinite;
+}
+
+.drop-zone.drag-over .shield-check {
+  opacity: 1;
+}
+
+.drop-zone.drag-over .shield-ring {
+  opacity: 0.7;
+  stroke: var(--glow-cyan);
+  animation: ringSpin 6s linear infinite;
+}
+
+@keyframes shieldDragPulse {
+  0%, 100% { filter: drop-shadow(0 0 22px rgba(0,229,199,0.6)); }
+  50% { filter: drop-shadow(0 0 40px rgba(124,77,255,0.8)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shield-idle .shield-shape,
+  .shield-idle .shield-ring,
+  .drop-zone.drag-over .shield-shape,
+  .drop-zone.drag-over .shield-ring {
+    opacity: 0.85;
+    filter: drop-shadow(0 0 20px rgba(0,229,199,0.45));
+  }
 }
 
 .drop-zone.drag-over {
