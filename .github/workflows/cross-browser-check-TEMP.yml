@@ -105,10 +105,7 @@ jobs:
                           sys.exit(11)
 
                   fixture_dir = "/tmp/fixture"
-                  await page.set_input_files("#folderInput", [
-                      os.path.join(fixture_dir, "app.properties"),
-                      os.path.join(fixture_dir, "notes.txt"),
-                  ])
+                  await page.set_input_files("#folderInput", fixture_dir)
 
                   try:
                       await page.wait_for_selector("#folderTreeState:not(.hidden)", timeout=10000)
