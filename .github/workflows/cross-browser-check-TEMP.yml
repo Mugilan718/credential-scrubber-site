@@ -50,112 +50,126 @@ jobs:
               http.server.ThreadingHTTPServer(("0.0.0.0", PORT), handler).serve_forever()
 
 
-          async def check_browser(p, name):
-              print(f"\n=== {name} ===")
+          # Each step below runs this for exactly one browser and exits
+          # non-zero on failure, so pass/fail per browser (and per stage,
+          # since we print which stage we reached before exiting) shows up
+          # as that step's own conclusion via the Actions API - this repo's
+          # API access can read run/job/step conclusions without auth, but
+          # not raw log content, so the stage reached is encoded as an exit
+          # code instead of relying on log text:
+          #   exit 0  = full PASS
+          #   exit 10 = page failed to load / dropZone never appeared
+          #   exit 11 = fsAccessArea visible despite no showDirectoryPicker
+          #   exit 12 = folder-filter tree or scan flow never reached results
+          #   exit 13 = reached results but redaction count/result rows were 0
+          #   exit 14 = downloaded zip still contains the real secret value
+          #   exit 15 = a page error or console error was raised
+          #   exit 1  = browser failed to launch at all
+
+          async def check_browser(name):
               page_errors = []
               console_errors = []
 
-              launcher = getattr(p, name)
-              browser = await launcher.launch()
-              page = await browser.new_page(viewport={"width": 1280, "height": 900}, accept_downloads=True)
-              page.on("pageerror", lambda e: page_errors.append(str(e)))
-              page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+              async with async_playwright() as p:
+                  launcher = getattr(p, name)
+                  try:
+                      browser = await launcher.launch()
+                  except Exception as e:
+                      print(f"{name}: COULD NOT LAUNCH -", repr(e))
+                      sys.exit(1)
 
-              await page.goto(f"http://127.0.0.1:{PORT}/scanner/index.html")
-              await page.wait_for_selector("#dropZone", state="attached", timeout=10000)
-              print("page loaded")
+                  page = await browser.new_page(viewport={"width": 1280, "height": 900}, accept_downloads=True)
+                  page.on("pageerror", lambda e: page_errors.append(str(e)))
+                  page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
 
-              fs_access_supported = await page.evaluate("() => typeof window.showDirectoryPicker === 'function'")
-              print("showDirectoryPicker supported:", fs_access_supported)
-              if not fs_access_supported:
-                  fs_area_hidden = await page.evaluate(
-                      "() => { const el = document.getElementById('fsAccessArea'); return !el || el.classList.contains('hidden'); }"
-                  )
-                  print("fsAccessArea correctly hidden when unsupported:", fs_area_hidden)
-                  if not fs_area_hidden:
-                      page_errors.append("fsAccessArea visible despite showDirectoryPicker unsupported")
+                  await page.goto(f"http://127.0.0.1:{PORT}/scanner/index.html")
+                  try:
+                      await page.wait_for_selector("#dropZone", state="attached", timeout=10000)
+                  except Exception as e:
+                      print("page failed to load:", repr(e))
+                      sys.exit(10)
+                  print("page loaded")
 
-              fixture_dir = "/tmp/fixture"
-              await page.set_input_files("#folderInput", [
-                  os.path.join(fixture_dir, "app.properties"),
-                  os.path.join(fixture_dir, "notes.txt"),
-              ])
+                  fs_access_supported = await page.evaluate("() => typeof window.showDirectoryPicker === 'function'")
+                  print("showDirectoryPicker supported:", fs_access_supported)
+                  if not fs_access_supported:
+                      fs_area_hidden = await page.evaluate(
+                          "() => { const el = document.getElementById('fsAccessArea'); return !el || el.classList.contains('hidden'); }"
+                      )
+                      print("fsAccessArea correctly hidden when unsupported:", fs_area_hidden)
+                      if not fs_area_hidden:
+                          print("FAIL: fsAccessArea visible despite showDirectoryPicker unsupported")
+                          sys.exit(11)
 
-              reached_results = False
-              try:
-                  await page.wait_for_selector("#folderTreeState:not(.hidden)", timeout=10000)
-                  print("folder-filter tree appeared")
-                  tree_rows = await page.locator(".tree-row").count()
-                  print("tree rows:", tree_rows)
+                  fixture_dir = "/tmp/fixture"
+                  await page.set_input_files("#folderInput", [
+                      os.path.join(fixture_dir, "app.properties"),
+                      os.path.join(fixture_dir, "notes.txt"),
+                  ])
 
-                  await page.click("#scanSelectedBtn")
-                  await page.wait_for_selector("#resultsState:not(.hidden)", timeout=10000)
-                  print("results state appeared")
+                  try:
+                      await page.wait_for_selector("#folderTreeState:not(.hidden)", timeout=10000)
+                      print("folder-filter tree appeared")
+                      tree_rows = await page.locator(".tree-row").count()
+                      print("tree rows:", tree_rows)
+
+                      await page.click("#scanSelectedBtn")
+                      await page.wait_for_selector("#resultsState:not(.hidden)", timeout=10000)
+                      print("results state appeared")
+                  except Exception as e:
+                      print("FLOW ERROR reaching results:", repr(e))
+                      sys.exit(12)
 
                   redaction_count = await page.text_content("#redactionCount")
                   files_scanned = await page.text_content("#filesScannedCount")
                   print("files scanned:", files_scanned, "/ redactions:", redaction_count)
-
                   result_rows = await page.locator(".result-row").count()
                   print("result rows:", result_rows)
-                  reached_results = int(redaction_count or "0") >= 1 and result_rows >= 1
+                  if int(redaction_count or "0") < 1 or result_rows < 1:
+                      print("FAIL: no redactions / no result rows")
+                      sys.exit(13)
 
-                  async with page.expect_download() as dl_info:
-                      await page.click("#downloadBtn")
-                  download = await dl_info.value
-                  zip_path = f"/tmp/{name}-download.zip"
-                  await download.save_as(zip_path)
-                  with zipfile.ZipFile(zip_path) as z:
-                      content = z.read("app.properties").decode("utf-8")
-                      print("sanitized app.properties content:", content.strip())
-                      if "fake-CrossBrowserSecret123" in content:
-                          page_errors.append("downloaded zip still contains the real secret value")
-              except Exception as e:
-                  print("FLOW ERROR:", repr(e))
-                  reached_results = False
+                  try:
+                      async with page.expect_download() as dl_info:
+                          await page.click("#downloadBtn")
+                      download = await dl_info.value
+                      zip_path = f"/tmp/{name}-download.zip"
+                      await download.save_as(zip_path)
+                      with zipfile.ZipFile(zip_path) as z:
+                          content = z.read("app.properties").decode("utf-8")
+                          print("sanitized app.properties content:", content.strip())
+                          if "fake-CrossBrowserSecret123" in content:
+                              print("FAIL: downloaded zip still contains the real secret value")
+                              sys.exit(14)
+                  except SystemExit:
+                      raise
+                  except Exception as e:
+                      print("FLOW ERROR during download:", repr(e))
+                      sys.exit(12)
 
-              await browser.close()
+                  await browser.close()
 
-              print("page errors:", page_errors)
-              print("console errors:", console_errors)
+                  print("page errors:", page_errors)
+                  print("console errors:", console_errors)
+                  if page_errors or console_errors:
+                      sys.exit(15)
 
-              ok = reached_results and not page_errors
-              print(f"=== {name}: {'PASS' if ok else 'FAIL'} ===")
-              return ok
-
-
-          async def main():
-              browsers = ["chromium", "firefox", "webkit"]
-              threading.Thread(target=serve, daemon=True).start()
-              await asyncio.sleep(0.5)
-
-              results = {}
-              async with async_playwright() as p:
-                  for name in browsers:
-                      try:
-                          results[name] = await check_browser(p, name)
-                      except Exception as e:
-                          print(f"{name}: COULD NOT LAUNCH -", repr(e))
-                          results[name] = False
-
-              print("\n=== SUMMARY ===")
-              for name, ok in results.items():
-                  print(name, "PASS" if ok else "FAIL")
-
-              if not all(results.values()):
-                  sys.exit(1)
+                  print(f"=== {name}: PASS ===")
 
 
-          asyncio.run(main())
+          threading.Thread(target=serve, daemon=True).start()
+          asyncio.run(asyncio.sleep(0.5))
+          asyncio.run(check_browser(sys.argv[1]))
           PYEOF
 
-      - name: Run cross-browser check
-        run: python /tmp/cross_browser_check.py 2>&1 | tee /tmp/cross-browser-output.txt
-        continue-on-error: true
-
-      - name: Upload diagnostic output
+      - name: "Chromium: core flow"
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cross-browser-output
-          path: /tmp/cross-browser-output.txt
+        run: python /tmp/cross_browser_check.py chromium
+
+      - name: "Firefox: core flow"
+        if: always()
+        run: python /tmp/cross_browser_check.py firefox
+
+      - name: "WebKit: core flow"
+        if: always()
+        run: python /tmp/cross_browser_check.py webkit
