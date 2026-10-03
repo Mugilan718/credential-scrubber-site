@@ -389,11 +389,22 @@ a { color: inherit; }
 .results-summary strong {
   display: block;
   font-family: var(--display);
-  font-size: 24px;
+  font-size: 42px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 26px rgba(0,229,199,0.4);
+}
+
+#redactionCount {
+  color: var(--glow-violet);
+  text-shadow: 0 0 26px rgba(124,77,255,0.5);
 }
 
 .results-summary span {
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
   color: var(--ink-soft);
 }
 
@@ -432,16 +443,29 @@ a { color: inherit; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
+  width: 27px;
+  height: 27px;
+  border-radius: 7px;
   flex-shrink: 0;
 }
-.result-rule-badge .icon { width: 12px; height: 12px; }
+.result-rule-badge .icon { width: 15px; height: 15px; }
 
-.result-rule-badge.sev-cyan { background: rgba(0,229,199,0.14); color: var(--glow-cyan); }
-.result-rule-badge.sev-violet { background: rgba(124,77,255,0.16); color: var(--glow-violet); }
-.result-rule-badge.sev-danger { background: rgba(242,84,91,0.16); color: var(--danger); }
+.result-rule-badge.sev-cyan { background: rgba(0,229,199,0.22); color: var(--glow-cyan); box-shadow: 0 0 14px rgba(0,229,199,0.35); }
+.result-rule-badge.sev-violet { background: rgba(124,77,255,0.24); color: var(--glow-violet); box-shadow: 0 0 14px rgba(124,77,255,0.38); }
+
+/* Critical findings (private keys, credentials embedded in a URL) get a
+   slow pulse, not just a different color - the one severity tier where
+   missing it at a glance is genuinely costly. */
+.result-rule-badge.sev-danger {
+  background: rgba(242,84,91,0.26);
+  color: var(--danger);
+  animation: dangerBadgePulse 1.8s ease-in-out infinite;
+}
+
+@keyframes dangerBadgePulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(242,84,91,0.35); }
+  50% { box-shadow: 0 0 22px rgba(242,84,91,0.8); }
+}
 
 .result-rule-text {
   color: var(--ink-soft);
@@ -850,10 +874,36 @@ a { color: inherit; }
 }
 
 #dropZone:not(.hidden),
-#scanningState:not(.hidden),
-#resultsState:not(.hidden) {
+#scanningState:not(.hidden) {
   animation: panelFadeIn 0.35s ease;
 }
+
+@keyframes resultsRevealIn {
+  from { opacity: 0; transform: translateY(26px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+#resultsState:not(.hidden) {
+  animation: resultsRevealIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes resultRowIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.result-row {
+  animation: resultRowIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.result-row:nth-child(1) { animation-delay: 0.08s; }
+.result-row:nth-child(2) { animation-delay: 0.13s; }
+.result-row:nth-child(3) { animation-delay: 0.18s; }
+.result-row:nth-child(4) { animation-delay: 0.23s; }
+.result-row:nth-child(5) { animation-delay: 0.28s; }
+.result-row:nth-child(6) { animation-delay: 0.33s; }
+.result-row:nth-child(7) { animation-delay: 0.38s; }
+.result-row:nth-child(8) { animation-delay: 0.43s; }
+.result-row:nth-child(n+9) { animation-delay: 0.48s; }
 
 @keyframes rowIgnoreFade {
   from { opacity: 1; transform: scale(1); }
