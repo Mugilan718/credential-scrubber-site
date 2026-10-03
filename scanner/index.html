@@ -135,7 +135,26 @@
   </div>
 
   <div id="scanningState" class="scanning-state hidden">
-    <div class="spinner"></div>
+    <div class="shield-stage shield-scanning" id="shieldScanning" aria-hidden="true">
+      <svg class="shield-visual" viewBox="0 0 24 24">
+        <defs>
+          <linearGradient id="scanBeamGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--glow-cyan)" stop-opacity="0"/>
+            <stop offset="50%" stop-color="var(--glow-cyan)" stop-opacity="0.9"/>
+            <stop offset="100%" stop-color="var(--glow-violet)" stop-opacity="0"/>
+          </linearGradient>
+          <clipPath id="shieldClip">
+            <path d="M12 2.5 4.5 5.5v5.5c0 5 3.2 8.5 7.5 10.5 4.3-2 7.5-5.5 7.5-10.5V5.5L12 2.5z"/>
+          </clipPath>
+        </defs>
+        <circle class="shield-ring" cx="12" cy="12" r="10.6"/>
+        <path class="shield-shape" d="M12 2.5 4.5 5.5v5.5c0 5 3.2 8.5 7.5 10.5 4.3-2 7.5-5.5 7.5-10.5V5.5L12 2.5z"/>
+        <g clip-path="url(#shieldClip)">
+          <rect class="shield-scan-beam" x="2" y="-4" width="20" height="4" fill="url(#scanBeamGrad)"/>
+        </g>
+        <path class="shield-check" d="M8.5 12l2.3 2.3L15.8 9"/>
+      </svg>
+    </div>
     <p id="scanningText">Reading files…</p>
   </div>
 
@@ -181,6 +200,25 @@
 
   <div id="resultsState" class="results-state hidden">
     <div class="results-summary">
+      <div class="shield-stage shield-complete" id="shieldComplete" aria-hidden="true">
+        <svg class="shield-visual" viewBox="0 0 24 24">
+          <defs>
+            <linearGradient id="completeSweepGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--glow-cyan)" stop-opacity="0"/>
+              <stop offset="50%" stop-color="#ffffff" stop-opacity="0.95"/>
+              <stop offset="100%" stop-color="var(--glow-violet)" stop-opacity="0"/>
+            </linearGradient>
+            <clipPath id="shieldClipComplete">
+              <path d="M12 2.5 4.5 5.5v5.5c0 5 3.2 8.5 7.5 10.5 4.3-2 7.5-5.5 7.5-10.5V5.5L12 2.5z"/>
+            </clipPath>
+          </defs>
+          <path class="shield-shape" d="M12 2.5 4.5 5.5v5.5c0 5 3.2 8.5 7.5 10.5 4.3-2 7.5-5.5 7.5-10.5V5.5L12 2.5z"/>
+          <g clip-path="url(#shieldClipComplete)">
+            <rect class="shield-complete-sweep" x="2" y="-6" width="20" height="6" fill="url(#completeSweepGrad)"/>
+          </g>
+          <path class="shield-check" d="M8.5 12l2.3 2.3L15.8 9"/>
+        </svg>
+      </div>
       <div><strong id="filesScannedCount">0</strong><span>files scanned</span></div>
       <div><strong id="redactionCount">0</strong><span>redactions</span></div>
       <button class="btn-glow" id="generateBtn">Generate sanitized file</button>

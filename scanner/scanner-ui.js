@@ -509,7 +509,13 @@
     await new Promise((r) => setTimeout(r, 30));
 
     const placeholderMode = !!(placeholderModeToggle && placeholderModeToggle.checked);
+    // Simplifies the shield's scan-beam animation for exactly the
+    // synchronous, CPU-heavy call below (see scanner/style.css's
+    // .scan-heavy rules) - added/removed tightly around just this call,
+    // not the whole scanning-state visibility.
+    scanningState.classList.add("scan-heavy");
     let scanResult = scanFiles(readable, { placeholderMode, ruleOverrides: currentOverrides });
+    scanningState.classList.remove("scan-heavy");
 
     // Reconcile against any findings the user previously ignored (see
     // storage.js's module comment): a finding whose value hasn't changed
