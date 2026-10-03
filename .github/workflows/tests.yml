@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # No package.json / npm dependencies by design (see README) - these
+      # are plain Node scripts that exit non-zero on any assertion
+      # failure, run directly rather than through an npm script.
+      - name: Run scanner-engine tests
+        run: node tests/scanner-engine.test.js
+
+      - name: Run storage tests
+        run: node tests/storage.test.js
