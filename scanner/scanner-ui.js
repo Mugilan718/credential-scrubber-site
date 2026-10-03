@@ -504,16 +504,19 @@
     if (!isRescan) {
       scanningText.textContent = `Scanning ${readable.length} files…`;
     }
-    // Yield to the browser so the "scanning" state actually paints before the
-    // (synchronous, potentially CPU-heavy) scan runs.
+    // Added BEFORE the yield below, not just around the scanFiles() call
+    // itself - toggling a class immediately before/after a synchronous
+    // call with no yield in between never actually paints (nothing paints
+    // mid-synchronous-task), which would make this class have no visible
+    // effect at all. Simplifies the shield's scan-beam animation for the
+    // heavy call below (see scanner/style.css's .scan-heavy rules).
+    scanningState.classList.add("scan-heavy");
+    // Yield to the browser so the "scanning" state (scan-heavy look
+    // included) actually paints before the (synchronous, potentially
+    // CPU-heavy) scan runs.
     await new Promise((r) => setTimeout(r, 30));
 
     const placeholderMode = !!(placeholderModeToggle && placeholderModeToggle.checked);
-    // Simplifies the shield's scan-beam animation for exactly the
-    // synchronous, CPU-heavy call below (see scanner/style.css's
-    // .scan-heavy rules) - added/removed tightly around just this call,
-    // not the whole scanning-state visibility.
-    scanningState.classList.add("scan-heavy");
     let scanResult = scanFiles(readable, { placeholderMode, ruleOverrides: currentOverrides });
     scanningState.classList.remove("scan-heavy");
 
