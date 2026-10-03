@@ -67,6 +67,7 @@ a { color: inherit; }
 }
 
 .scanner-main {
+  position: relative;
   max-width: 900px;
   margin: 0 auto;
   padding: 40px 24px 80px;
@@ -74,6 +75,23 @@ a { color: inherit; }
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+/* Ambient halo behind the drop-zone - a toned-down echo of the landing
+   page's glowing hero, so the scanner doesn't read as a calmer, unrelated
+   product. Anchored near the top rather than centered on the whole
+   (tall, scrolling) .scanner-main container. */
+.scanner-main::before {
+  content: "";
+  position: absolute;
+  top: -60px;
+  left: 50%;
+  width: 760px;
+  height: 620px;
+  transform: translateX(-50%);
+  background: radial-gradient(circle, rgba(0,229,199,0.16) 0%, rgba(124,77,255,0.1) 38%, transparent 70%);
+  pointer-events: none;
+  z-index: -1;
 }
 
 /* ---------- Drop zone ---------- */
@@ -569,6 +587,7 @@ a { color: inherit; }
 }
 
 .section-badge {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -578,11 +597,24 @@ a { color: inherit; }
   flex-shrink: 0;
 }
 
+/* Halo ring behind the badge - the same glow language as the hero,
+   toned down to an accent rather than a centerpiece. */
+.section-badge::before {
+  content: "";
+  position: absolute;
+  inset: -12px;
+  border-radius: 50%;
+  filter: blur(16px);
+  z-index: -1;
+  pointer-events: none;
+}
+
 .section-badge-cyan {
   background: rgba(0,229,199,0.18);
   border: 1.5px solid rgba(0,229,199,0.55);
   box-shadow: 0 0 22px rgba(0,229,199,0.3);
 }
+.section-badge-cyan::before { background: rgba(0,229,199,0.35); }
 .section-badge-cyan .panel-title-icon { color: var(--glow-cyan); filter: drop-shadow(0 0 6px rgba(0,229,199,0.7)); }
 
 .section-badge-violet {
@@ -590,6 +622,7 @@ a { color: inherit; }
   border: 1.5px solid rgba(124,77,255,0.55);
   box-shadow: 0 0 22px rgba(124,77,255,0.3);
 }
+.section-badge-violet::before { background: rgba(124,77,255,0.35); }
 .section-badge-violet .panel-title-icon { color: var(--glow-violet); filter: drop-shadow(0 0 6px rgba(124,77,255,0.7)); }
 
 .panel-title-icon { margin-right: 2px; }
