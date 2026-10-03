@@ -578,7 +578,7 @@ function redactCodeLine(line, lang, lineNo, filename, reportEntries, registry = 
 // typed-placeholder mode for multiline is a later phase.
 // ---------------------------------------------------------------------
 
-const PLUS_CONCAT_LANGS = new Set(["java", "javascript", "csharp"]); // matches engine.py's PLUS_CONCAT_LANGS - Go is intentionally not covered
+const PLUS_CONCAT_LANGS = new Set(["java", "javascript", "csharp", "go"]); // matches engine.py's PLUS_CONCAT_LANGS
 
 const PY_ASSIGN_OPEN = /^\s*([A-Za-z_]\w*)\s*=\s*\(\s*$/;
 const PY_FRAGMENT = /^\s*["']([^"']*)["']\s*$/;
@@ -591,6 +591,20 @@ const PLUS_ASSIGN_START = /^(?:\s*(?:private|public|protected|static|final|reado
 const PLUS_CONT_LEADING = /^\s*\+\s*["']([^"']*)["']\s*(;)?\s*$/;
 // Continuation, "trailing +" style:      "frag" +      or      "frag";
 const PLUS_CONT_TRAILING = /^\s*["']([^"']*)["']\s*(\+)?\s*(;)?\s*$/;
+
+// Go's `var name Type = "frag"` puts the type AFTER the name, unlike
+// Java/C#'s `Type name = ...` - PLUS_ASSIGN_START's "swallow everything
+// before the captured name" logic assumes the type comes first, so it
+// captures the type ("Type") instead of the name for this form. Needs its
+// own pattern. Same capture-group layout as PLUS_ASSIGN_START (1: name,
+// 2: first fragment, 3: optional trailing '+') so scanMultilinePlus
+// doesn't need to care which one matched. Mirrors engine.py's
+// _PLUS_ASSIGN_START_GO_VAR.
+const PLUS_ASSIGN_START_GO_VAR = /^\s*var\s+(\w+)\s+[\w.\[\]*]+\s*=\s*["']([^"']*)["']\s*(\+\s*)?$/;
+// Go's short variable declaration, `name := "frag"` - PLUS_ASSIGN_START
+// requires a bare `=`, not `:=`. Mirrors engine.py's
+// _PLUS_ASSIGN_START_GO_SHORT.
+const PLUS_ASSIGN_START_GO_SHORT = /^\s*(\w+)\s*:=\s*["']([^"']*)["']\s*(\+\s*)?$/;
 
 // KEY_PATTERN_SOURCES (data-driven, defined near the top of this file
 // alongside SHARED_RULES) is reused here too - the same raw pattern list
@@ -708,12 +722,20 @@ function scanMultilinePython(lines, filename, reportEntries, registry = null) {
  *         "frag";                 + "frag";
  * Only redacts if the chain is properly terminated with ';' - a chain that
  * trails off without a terminator is left untouched rather than guessed at.
+ *
+ * Exception: Go (lang="go") doesn't use semicolons by convention (they're
+ * auto-inserted at end-of-line, and gofmt strips them) - for Go, a chain
+ * that simply stops continuing (next line doesn't extend it, including
+ * running to EOF) is ALSO treated as complete, since requiring an explicit
+ * ';' would silently miss idiomatic Go source that never has one. Mirrors
+ * engine.py's scan_multiline_plus().
  */
-function scanMultilinePlus(lines, filename, reportEntries, registry = null) {
+function scanMultilinePlus(lines, filename, reportEntries, registry = null, lang = null) {
+  const requireTerminator = lang !== "go";
   const n = lines.length;
   let i = 0;
   while (i < n) {
-    const m = PLUS_ASSIGN_START.exec(lines[i]);
+    const m = PLUS_ASSIGN_START.exec(lines[i]) || PLUS_ASSIGN_START_GO_VAR.exec(lines[i]) || PLUS_ASSIGN_START_GO_SHORT.exec(lines[i]);
     if (m) {
       const varName = m[1];
       const firstFrag = m[2];
@@ -724,19 +746,21 @@ function scanMultilinePlus(lines, filename, reportEntries, registry = null) {
       let terminated = false;
 
       if (hadTrailingPlus) {
-        while (j < n) {
+        while (true) {
+          if (j >= n) { if (!requireTerminator) terminated = true; break; }
           const cont = PLUS_CONT_TRAILING.exec(lines[j]);
           if (!cont) break;
           fragments.push(cont[1]);
           fragIndices.push(j);
           j++;
           if (cont[3]) { terminated = true; break; }
-          if (!cont[2]) break;
+          if (!cont[2]) { if (!requireTerminator) terminated = true; break; }
         }
       } else if (j < n && PLUS_CONT_LEADING.test(lines[j])) {
-        while (j < n) {
+        while (true) {
+          if (j >= n) { if (!requireTerminator) terminated = true; break; }
           const cont = PLUS_CONT_LEADING.exec(lines[j]);
-          if (!cont) break;
+          if (!cont) { if (!requireTerminator) terminated = true; break; }
           fragments.push(cont[1]);
           fragIndices.push(j);
           j++;
@@ -811,7 +835,7 @@ function scanFiles(files, options = {}) {
           scanMultilinePython(lines, file.path, reportEntries, registry);
         }
         if (PLUS_CONCAT_LANGS.has(lang)) {
-          scanMultilinePlus(lines, file.path, reportEntries, registry);
+          scanMultilinePlus(lines, file.path, reportEntries, registry, lang);
         }
         const out = lines.map((l, i) => {
           if (alreadyRedactedText(l, registry)) return l; // already redacted by a multiline pass above - don't double-process

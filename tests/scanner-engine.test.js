@@ -217,20 +217,69 @@ await test("single fragment only (no real concatenation) is not treated as multi
   assert.strictEqual(entries.length, 0);
 });
 
-console.log("\nGo parity (intentionally NOT covered, matching engine.py):");
+console.log("\nGo '+' concatenation (var and := forms, both styles - mirrors engine.py):");
 
-await test("Go '+' concatenation is not detected (matches desktop's known limitation)", () => {
+await test("Go var-declared trailing-+ style (with semicolon) masks every fragment", () => {
   const lines = [
-    'authToken := "fakeGo1234" +',
-    '    "moreSecretGo"',
+    'var connString string = "fake-conn-A1b2" +',
+    '    "C3d4-secret";',
   ];
   const entries = [];
-  // Go is deliberately excluded from PLUS_CONCAT_LANGS - scanFiles() would
-  // never call scanMultilinePlus for a .go file. Confirm directly too: even
-  // if called, Go's ":=" operator doesn't match PLUS_ASSIGN_START's "=" only
-  // syntax, so nothing should be flagged.
-  scanMultilinePlus(lines, "f.go", entries);
+  scanMultilinePlus(lines, "f.go", entries, null, "go");
+  const joined = lines.join("\n");
+  assert.ok(!joined.includes("fake-conn-A1b2"));
+  assert.ok(!joined.includes("C3d4-secret"));
+  assert.strictEqual(entries.length, 2);
+});
+
+await test("Go var-declared leading-+ style (no semicolon, idiomatic) masks every fragment", () => {
+  const lines = [
+    'var apiToken string = "fakeTok3n-X9z"',
+    '    + "Y8w7-Value"',
+  ];
+  const entries = [];
+  scanMultilinePlus(lines, "f.go", entries, null, "go");
+  const joined = lines.join("\n");
+  assert.ok(!joined.includes("fakeTok3n-X9z"));
+  assert.ok(!joined.includes("Y8w7-Value"));
+  assert.strictEqual(entries.length, 2);
+});
+
+await test("Go short-declaration (:=) trailing-+ style (no semicolon, idiomatic) masks every fragment", () => {
+  const lines = [
+    'dbPassword := "fakeP4ss-Qr5t" +',
+    '    "Uv6w-End"',
+  ];
+  const entries = [];
+  scanMultilinePlus(lines, "f.go", entries, null, "go");
+  const joined = lines.join("\n");
+  assert.ok(!joined.includes("fakeP4ss-Qr5t"));
+  assert.ok(!joined.includes("Uv6w-End"));
+  assert.strictEqual(entries.length, 2);
+});
+
+await test("Go short-declaration (:=) leading-+ style (with semicolon) masks every fragment", () => {
+  const lines = [
+    'secretKey := "fakeKey-Ab12"',
+    '    + "Cd34-Final";',
+  ];
+  const entries = [];
+  scanMultilinePlus(lines, "f.go", entries, null, "go");
+  const joined = lines.join("\n");
+  assert.ok(!joined.includes("fakeKey-Ab12"));
+  assert.ok(!joined.includes("Cd34-Final"));
+  assert.strictEqual(entries.length, 2);
+});
+
+await test("Go chain without a lang hint is not terminated (guards the relaxed no-semicolon path from leaking into the default)", () => {
+  const lines = [
+    'apiKey := "fakeNoTerm123" +',
+    '    "456Value"',
+  ];
+  const entries = [];
+  scanMultilinePlus(lines, "f.go", entries); // no lang passed - requireTerminator stays true
   assert.strictEqual(entries.length, 0);
+  assert.ok(lines.join("\n").includes("fakeNoTerm123"));
 });
 
 console.log("\nFull pipeline (scanFiles) - multiline integrates correctly with single-line pass:");
