@@ -150,4 +150,12 @@ jobs:
           PYEOF
 
       - name: Run cross-browser check
-        run: python /tmp/cross_browser_check.py
+        run: python /tmp/cross_browser_check.py 2>&1 | tee /tmp/cross-browser-output.txt
+        continue-on-error: true
+
+      - name: Upload diagnostic output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-browser-output
+          path: /tmp/cross-browser-output.txt
