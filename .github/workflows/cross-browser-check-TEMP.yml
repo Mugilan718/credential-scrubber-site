@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   cross-browser:
     runs-on: ubuntu-latest
@@ -166,12 +169,36 @@ jobs:
 
       - name: "Chromium: core flow"
         if: always()
-        run: python /tmp/cross_browser_check.py chromium
+        run: |
+          set -o pipefail
+          python /tmp/cross_browser_check.py chromium 2>&1 | tee /tmp/out-chromium.txt
 
       - name: "Firefox: core flow"
         if: always()
-        run: python /tmp/cross_browser_check.py firefox
+        run: |
+          set -o pipefail
+          python /tmp/cross_browser_check.py firefox 2>&1 | tee /tmp/out-firefox.txt
 
       - name: "WebKit: core flow"
         if: always()
-        run: python /tmp/cross_browser_check.py webkit
+        run: |
+          set -o pipefail
+          python /tmp/cross_browser_check.py webkit 2>&1 | tee /tmp/out-webkit.txt
+
+      - name: Publish diagnostic output to a throwaway branch
+        if: always()
+        run: |
+          mkdir -p /tmp/diag
+          for b in chromium firefox webkit; do
+            echo "=== $b ===" >> /tmp/diag/output.txt
+            cat /tmp/out-$b.txt >> /tmp/diag/output.txt 2>/dev/null || echo "(no output captured)" >> /tmp/diag/output.txt
+            echo "" >> /tmp/diag/output.txt
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan diagnostic-output
+          git rm -rf . >/dev/null 2>&1 || true
+          cp /tmp/diag/output.txt .
+          git add output.txt
+          git commit -m "Diagnostic output for run ${{ github.run_id }}"
+          git push --force origin diagnostic-output
