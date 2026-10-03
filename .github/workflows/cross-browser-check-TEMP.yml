@@ -130,8 +130,10 @@ jobs:
                       sys.exit(13)
 
                   try:
+                      await page.click("#generateBtn")
+                      await page.wait_for_selector("#downloadGeneratedBtn:not(.hidden)", timeout=10000)
                       async with page.expect_download() as dl_info:
-                          await page.click("#downloadBtn")
+                          await page.click("#downloadGeneratedBtn")
                       download = await dl_info.value
                       zip_path = f"/tmp/{name}-download.zip"
                       await download.save_as(zip_path)
