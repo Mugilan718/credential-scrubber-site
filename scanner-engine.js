@@ -212,6 +212,79 @@ const UNRECOGNIZED_FILE_VALUE_PATTERN_NAMES = new Set([
 // identically.
 const UNRECOGNIZED_FILE_RULE_PREFIX = "fallback";
 
+// A REAL multi-line private-key block (id_rsa, server.pem, ...) - unlike
+// VALUE_PATTERNS' own "private_key_block" entry, which (like every other
+// value pattern) is only ever matched one line at a time (see
+// redactValuePatternsOnly()), and so only ever catches a key written as a
+// single line with literal escaped "\n"s (e.g. a JSON/.env-style value).
+// This is the unrecognized-file branch's own, separate detector for the
+// common case: a real key file, or a key pasted as-is into some other
+// unrecognized file type, spanning many physical lines. Mirrors engine.py's
+// _MULTILINE_PRIVATE_KEY_BLOCK exactly (see its comment for the full
+// rationale) - JS's native named-group syntax differs from Python's, so
+// this is its own regex literal rather than a shared string, but the
+// matched shape and masking behavior are identical.
+//
+// Deliberately requires "PRIVATE KEY" in both the BEGIN and (if present)
+// END markers - a "-----BEGIN CERTIFICATE-----" block never matches, on
+// purpose; a certificate is public material, not a secret.
+//
+// The trailing `$` alternative (no `m` flag, so it anchors to the actual
+// end of the string, not the end of any line) is what masks all the way
+// to end-of-file when no END line is ever found, rather than leaving the
+// remainder of a truncated/corrupted key body sitting in the output
+// unmasked.
+const MULTILINE_PRIVATE_KEY_BLOCK = /(?<header>-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n)(?<body>(?:.*?\r?\n)*?)(?<footer>-----END [A-Z ]*PRIVATE KEY-----\r?\n?|$)/gi;
+
+const LINE_ENDING = /\r?\n$/;
+
+/**
+ * Finds and masks every real multi-line private-key block in `content`
+ * (a whole file's text, not a single line), returning the masked content -
+ * same total line count as the input, so splitting the result back into
+ * lines keeps every other finding's reported line number correct.
+ *
+ * Masking approach (mirrors engine.py's _mask_multiline_private_key_block()):
+ * the BEGIN/END marker lines are kept as-is (never sensitive); the body
+ * between them - which may be any number of lines - is collapsed to a
+ * single MASK/placeholder marker on its first line, with every other body
+ * line blanked (its own line ending kept, content emptied). This keeps the
+ * block's (and so the file's) total line count identical to the original.
+ *
+ * `entry.after` is deliberately the WHOLE masked block (header + masked
+ * body + footer), not just the inserted marker - so it spans the exact
+ * same number of lines as `entry.before` (the whole original block). The
+ * website's ignore system restores/re-masks a finding by splicing lines
+ * starting at `entry.line` (see replaceAcrossLines()) rather than Python's
+ * inline check-before-redacting; keeping before/after the same shape
+ * (both "the whole block, as text") is what makes that splice symmetric
+ * in both directions without any rule-specific special-casing there.
+ */
+function maskMultilinePrivateKeyBlocks(content, reportEntries, filename, registry = null) {
+  return content.replace(MULTILINE_PRIVATE_KEY_BLOCK, (whole, header, body, footer, offset) => {
+    if (isPlaceholder(whole)) return whole;
+
+    const lineNo = content.slice(0, offset).split("\n").length;
+    const marker = registry ? registry.getOrCreate("PRIVATE_KEY", whole) : MASK;
+
+    // splitlines(keepends=True)-equivalent: split right after each line
+    // ending, so every piece keeps its own terminator attached.
+    const bodyLines = body ? body.split(/(?<=\r?\n)/) : [];
+    let maskedBody;
+    if (bodyLines.length) {
+      const firstEnding = (bodyLines[0].match(LINE_ENDING) || [""])[0];
+      const restEndings = bodyLines.slice(1).map((ln) => (ln.match(LINE_ENDING) || [""])[0]);
+      maskedBody = marker + firstEnding + restEndings.join("");
+    } else {
+      maskedBody = body; // BEGIN immediately followed by END (or EOF) - nothing to mask.
+    }
+
+    const maskedWhole = header + maskedBody + footer;
+    reportEntries.push({ file: filename, line: lineNo, key: null, rule: `${UNRECOGNIZED_FILE_RULE_PREFIX}:private_key_block`, before: whole, after: maskedWhole });
+    return maskedWhole;
+  });
+}
+
 // The lists detection actually consults. Equal to the base by default;
 // temporarily reassigned (never mutated in place - always to a brand-new
 // array/Set) to an override-merged view for the duration of a single
@@ -926,7 +999,13 @@ function scanFiles(files, options = {}) {
         });
         sanitizedFiles.push({ path: file.path, content: out.join("\n") });
       } else if (classification === null && isLikelyTextFile(file.path)) {
-        const out = lines.map((l, i) => redactValuePatternsOnly(
+        // Normalized to "\n"-only line endings (same as `lines.join("\n")`
+        // everywhere else in this function) before the multi-line PEM pass,
+        // so entry.before/after - and the plain per-line pass below - all
+        // agree on line endings.
+        const pemMasked = maskMultilinePrivateKeyBlocks(lines.join("\n"), reportEntries, file.path, registry);
+        const pemLines = pemMasked.split("\n");
+        const out = pemLines.map((l, i) => redactValuePatternsOnly(
           l, i + 1, file.path, reportEntries, registry,
           UNRECOGNIZED_FILE_VALUE_PATTERN_NAMES, UNRECOGNIZED_FILE_RULE_PREFIX,
         ));
@@ -1214,6 +1293,33 @@ function replaceNthOccurrence(str, search, replacement, occurrenceIndex) {
 }
 
 /**
+ * Replace `search` with `replacement` in `lines` (an array of line
+ * strings, no "\n") starting at 0-indexed `lineIdx`, mutating `lines` in
+ * place. For a `search` confined to one line (every finding except a real
+ * multi-line private-key block - see maskMultilinePrivateKeyBlocks()),
+ * this is exactly replaceNthOccurrence() applied to lines[lineIdx].
+ *
+ * For a `search` spanning multiple lines, `occurrenceIndex` doesn't apply
+ * (such a block is a single self-contained unit, never sharing its span
+ * with another finding) - instead, the same number of lines `search`
+ * itself spans is spliced out starting at lineIdx and replaced with
+ * `replacement`'s own lines. maskMultilinePrivateKeyBlocks() always
+ * builds `before`/`after` to span the identical number of lines as each
+ * other, so this splice is exactly symmetric in both restore directions
+ * (real value <-> masked value).
+ */
+function replaceAcrossLines(lines, lineIdx, search, replacement, occurrenceIndex) {
+  if (lines[lineIdx] === undefined || !search) return;
+  const searchLines = search.split("\n");
+  if (searchLines.length === 1) {
+    lines[lineIdx] = replaceNthOccurrence(lines[lineIdx], search, replacement, occurrenceIndex);
+    return;
+  }
+  const spanLen = Math.min(searchLines.length, lines.length - lineIdx);
+  lines.splice(lineIdx, spanLen, ...replacement.split("\n"));
+}
+
+/**
  * Reconcile a completed scanFiles() result against a persisted ignore map.
  *
  * `ignoreMap`: a plain object, `{ [ignoreKeyFor(file,key,rule)]: storedHash }`
@@ -1286,10 +1392,7 @@ async function applyIgnores(scanResult, ignoreMap) {
     if (!fileRestorations || f.binary) return f;
     const lines = f.content.split("\n");
     for (const r of fileRestorations) {
-      const idx = r.line - 1;
-      if (lines[idx] !== undefined) {
-        lines[idx] = replaceNthOccurrence(lines[idx], r.after, r.before, r.occurrenceIndex);
-      }
+      replaceAcrossLines(lines, r.line - 1, r.after, r.before, r.occurrenceIndex);
     }
     return { path: f.path, content: lines.join("\n") };
   });
@@ -1314,10 +1417,7 @@ function reapplyRedaction(sanitizedFiles, entry) {
   return sanitizedFiles.map((f) => {
     if (f.path !== entry.file || f.binary) return f;
     const lines = f.content.split("\n");
-    const idx = entry.line - 1;
-    if (lines[idx] !== undefined) {
-      lines[idx] = replaceNthOccurrence(lines[idx], entry.before, entry.after, entry.occurrenceIndex || 0);
-    }
+    replaceAcrossLines(lines, entry.line - 1, entry.before, entry.after, entry.occurrenceIndex || 0);
     return { path: f.path, content: lines.join("\n") };
   });
 }
@@ -1330,6 +1430,7 @@ if (typeof module !== "undefined") {
     PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
     categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
     hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence, reapplyRedaction,
+    maskMultilinePrivateKeyBlocks,
     computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist,
     findKeyValue, quoteWrap, classifyFile,
     collectFilesFromDirectoryHandle,

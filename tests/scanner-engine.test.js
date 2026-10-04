@@ -17,6 +17,7 @@ const {
   PlaceholderRegistry, categoryForKeyPattern, categoryForValuePattern,
   categoryForCodeKeyword, extractCodeKeyword, mostSpecificCategory,
   hashValue, ignoreKeyFor, applyIgnores, replaceNthOccurrence, reapplyRedaction,
+  maskMultilinePrivateKeyBlocks,
   computeEffectiveKeyPatterns, computeEffectivePlaceholderAllowlist, getBaseRuleSnapshot,
   findKeyValue, quoteWrap, classifyFile,
   collectFilesFromDirectoryHandle,
@@ -1617,6 +1618,144 @@ await test("a realistic bearer token in a config file is still redacted", () => 
   assert.strictEqual(entries.length, 1);
   assert.strictEqual(entries[0].rule, "bearer_token");
   assert.ok(!result.includes(fakeToken));
+});
+
+// -----------------------------------------------------------------------
+// Multi-line private-key block detection (mirrors engine.py's
+// _mask_multiline_private_key_blocks()): unlike VALUE_PATTERNS' own
+// "private_key_block" entry (which only ever matches within one physical
+// line), a REAL multi-line key (id_rsa, server.pem, ...) spans many lines
+// and needed its own, separate detector in the unrecognized-file branch.
+// -----------------------------------------------------------------------
+
+console.log("\nMulti-line private-key block detection:");
+
+const ID_RSA =
+  "-----BEGIN RSA PRIVATE KEY-----\n" +
+  "MIIEpQIBAAKCAQEA1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJ\n" +
+  "KLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ\n" +
+  "KLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz==\n" +
+  "-----END RSA PRIVATE KEY-----\n";
+
+await test("realistic id_rsa fixture is masked, line count preserved", () => {
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "id_rsa", content: ID_RSA }]);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:private_key_block");
+  assert.strictEqual(reportEntries[0].key, null);
+  assert.strictEqual(reportEntries[0].line, 1);
+  const written = sanitizedFiles[0].content;
+  assert.ok(!written.includes("MIIEpQIBAAKCAQEA"));
+  assert.ok(written.startsWith("-----BEGIN RSA PRIVATE KEY-----\n"));
+  assert.ok(written.includes("-----END RSA PRIVATE KEY-----"));
+  assert.strictEqual(written.split("\n").length, ID_RSA.split(/\r?\n/).length);
+});
+
+const SERVER_PEM_CRLF =
+  "-----BEGIN EC PRIVATE KEY-----\r\n" +
+  "MIIFAKEFAKEFAKEFAKEFAKEFAKEFAKE\r\n" +
+  "MOREFAKEDATAHEREFAKEFAKEFAKEFAKE\r\n" +
+  "-----END EC PRIVATE KEY-----\r\n";
+
+await test("realistic server.pem fixture with CRLF line endings is masked", () => {
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "server.pem", content: SERVER_PEM_CRLF }]);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:private_key_block");
+  const written = sanitizedFiles[0].content;
+  assert.ok(!written.includes("MIIFAKEFAKE"));
+  assert.ok(written.includes("-----BEGIN EC PRIVATE KEY-----"));
+  assert.ok(written.includes("-----END EC PRIVATE KEY-----"));
+});
+
+await test("a .txt file containing a key block is masked", () => {
+  const content = `Here is a key dump for debugging:\n${ID_RSA}End of dump.\n`;
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "notes.txt", content }]);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:private_key_block");
+  assert.strictEqual(reportEntries[0].line, 2);
+  const written = sanitizedFiles[0].content;
+  assert.ok(!written.includes("MIIEpQIBAAKCAQEA"));
+  assert.ok(written.includes("Here is a key dump for debugging:"));
+  assert.ok(written.includes("End of dump."));
+  assert.strictEqual(written.split("\n").length, content.split(/\r?\n/).length);
+});
+
+await test("a truncated key with no END line is masked to end of file", () => {
+  const truncated =
+    "-----BEGIN OPENSSH PRIVATE KEY-----\n" +
+    "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUFAKEFAKEFAKEFAKEFAKE\n" +
+    "AAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZWQyNTUxOUFAKE\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "id_ed25519", content: truncated }]);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:private_key_block");
+  const written = sanitizedFiles[0].content;
+  assert.ok(!written.includes("b3BlbnNzaC1rZXktdjEAAAAABG5vbmU"));
+  assert.ok(!written.includes("AAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZWQyNTUx"));
+  assert.ok(written.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----\n"));
+});
+
+await test("a CERTIFICATE block is NOT masked", () => {
+  const cert =
+    "-----BEGIN CERTIFICATE-----\n" +
+    "MIIBFAKECERTDATAHEREFAKEFAKEFAKEFAKE1234567890\n" +
+    "-----END CERTIFICATE-----\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "cert.pem", content: cert }]);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.strictEqual(sanitizedFiles[0].content, cert.replace(/\r?\n/g, "\n"));
+});
+
+await test("the single-line escaped-\\n PEM case still passes alongside the new multi-line detector", () => {
+  const pem = "-----BEGIN RSA PRIVATE KEY-----\\nMIIFAKEFAKEFAKEFAKEFAKEFAKEFAKE\\n-----END RSA PRIVATE KEY-----\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "id_rsa.bak", content: pem }]);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:private_key_block");
+  assert.ok(!sanitizedFiles[0].content.includes("MIIFAKEFAKE"));
+});
+
+await test("a multi-line key finding (key=null) is suppressible via the ignore system, byte-for-byte restore", async () => {
+  const scan = scanFiles([{ path: "id_rsa", content: ID_RSA }]);
+  const ignoreKey = ignoreKeyFor("id_rsa", null, "fallback:private_key_block");
+  const valueHash = await hashValue(scan.reportEntries[0].before);
+  const reconciled = await applyIgnores(scan, { [ignoreKey]: valueHash });
+  assert.strictEqual(reconciled.reportEntries.length, 0);
+  assert.strictEqual(reconciled.sanitizedFiles[0].content, ID_RSA, "restored content matches the original exactly");
+});
+
+await test("undoing that ignore (reapplyRedaction) re-masks the multi-line block correctly", async () => {
+  const scan = scanFiles([{ path: "id_rsa", content: ID_RSA }]);
+  const ignoreKey = ignoreKeyFor("id_rsa", null, "fallback:private_key_block");
+  const valueHash = await hashValue(scan.reportEntries[0].before);
+  const reconciled = await applyIgnores(scan, { [ignoreKey]: valueHash });
+  const reMasked = reapplyRedaction(reconciled.sanitizedFiles, reconciled.restoredEntries[0]);
+  assert.ok(!reMasked[0].content.includes("MIIEpQIBAAKCAQEA"));
+  assert.ok(reMasked[0].content.includes("-----BEGIN RSA PRIVATE KEY-----"));
+});
+
+await test("a multi-line key finding respects placeholder mode (typed token, correlates across files)", () => {
+  const files = [{ path: "a_key", content: ID_RSA }, { path: "b_key", content: ID_RSA }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files, { placeholderMode: true });
+  assert.strictEqual(reportEntries.length, 2);
+  const a = sanitizedFiles.find((f) => f.path === "a_key");
+  const b = sanitizedFiles.find((f) => f.path === "b_key");
+  assert.ok(a.content.includes("<PRIVATE_KEY_1>"));
+  assert.ok(b.content.includes("<PRIVATE_KEY_1>"));
+  assert.ok(!a.content.includes("MIIEpQIBAAKCAQEA"));
+});
+
+await test("investigative, not a requirement: a PEM in a YAML block-scalar value is NOT caught (pre-existing, undocumented-as-fixed limitation, out of scope)", () => {
+  const yml = "private_key: |\n  -----BEGIN RSA PRIVATE KEY-----\n  MIIFAKEDATA1234567890ABCDEFGHIJ\n  -----END RSA PRIVATE KEY-----\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "config.yml", content: yml }]);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.ok(sanitizedFiles[0].content.includes("MIIFAKEDATA1234567890ABCDEFGHIJ"));
+});
+
+await test("investigative, not a requirement: a PEM across .properties backslash-continuation lines is NOT caught (no continuation-joining exists, out of scope)", () => {
+  // A real 3-physical-line continuation (each non-final line ending in a
+  // literal backslash) - written with explicit \n so there's no ambiguity
+  // about whether these are real line breaks.
+  const props = "server.key=-----BEGIN RSA PRIVATE KEY-----\\\nMIIFAKEDATA1234567890ABCDEFGHIJ\\\n-----END RSA PRIVATE KEY-----\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "app.properties", content: props }]);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.ok(sanitizedFiles[0].content.includes("MIIFAKEDATA1234567890ABCDEFGHIJ"));
 });
 
 // -----------------------------------------------------------------------
