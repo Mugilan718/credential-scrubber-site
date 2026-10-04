@@ -174,12 +174,21 @@
         <code>-----BEGIN</code>/<code>-----END ... PRIVATE KEY-----</code>
         markers across lines, masking the body while leaving the harmless
         BEGIN/END lines themselves and a <code>-----BEGIN
-        CERTIFICATE-----</code> block (not a secret) untouched. This is
-        separate from the single-line-only value-pattern match above, and
-        only applies to unrecognized file types - a key embedded as a YAML
-        block-scalar value, or split across <code>.properties</code>
-        continuation lines, in a fully-detected file type is <strong>not</strong>
-        caught by this or any other existing mechanism.</p>
+        CERTIFICATE-----</code> block (not a secret) untouched. A block
+        only starts at a line that's <em>just</em> the BEGIN marker
+        (leading whitespace/one optional quote character allowed, never
+        mid-sentence) - a document that merely mentions the marker is
+        left untouched. When no END line follows, only the consecutive
+        lines that still look like key material (base64 body text, or a
+        <code>Proc-Type:</code>/<code>DEK-Info:</code> header) are
+        masked, stopping at the first line that doesn't, so a marker
+        mentioned in passing and then followed by ordinary prose doesn't
+        lose that prose. This is separate from the single-line-only
+        value-pattern match above, and only applies to unrecognized
+        file types - a key embedded as a YAML block-scalar value, or
+        split across <code>.properties</code> continuation lines, in a
+        fully-detected file type is <strong>not</strong> caught by this
+        or any other existing mechanism.</p>
         <p>Files recognized as binary, or over a 2MB size limit, are
         still skipped and copied through untouched either way - the
         scan results (and, on the desktop app, the Apply confirmation)
