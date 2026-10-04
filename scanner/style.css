@@ -618,7 +618,7 @@ a { color: inherit; }
 
 .result-row {
   display: grid;
-  grid-template-columns: 42px 1fr 90px 140px 84px;
+  grid-template-columns: 42px minmax(160px, 1fr) minmax(90px, 170px) minmax(110px, 200px) 84px;
   align-items: center;
   padding: 10px 16px;
   font-family: var(--mono);
@@ -629,7 +629,7 @@ a { color: inherit; }
 .result-row:nth-child(even) { background: rgba(255,255,255,0.02); }
 
 .result-line { color: var(--ink-soft); }
-.result-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-file { overflow-wrap: anywhere; }
 
 .result-rule {
   display: flex;
@@ -670,12 +670,10 @@ a { color: inherit; }
 
 .result-rule-text {
   color: var(--ink-soft);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
-.result-key { color: var(--ink-soft); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-key { color: var(--ink-soft); font-size: 11px; overflow-wrap: anywhere; }
 
 .result-changed-badge {
   display: block;
@@ -1062,7 +1060,7 @@ a { color: inherit; }
 
 @media (max-width: 600px) {
   .drop-zone { padding: 50px 20px; }
-  .result-row { grid-template-columns: 32px 1fr 70px 60px; }
+  .result-row { grid-template-columns: 32px minmax(90px, 1fr) minmax(60px, 100px) 60px; }
   .result-key { display: none; }
   .scan-history-row { flex-direction: column; align-items: flex-start; gap: 2px; }
 }

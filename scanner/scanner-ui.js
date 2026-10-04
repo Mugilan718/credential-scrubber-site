@@ -658,10 +658,10 @@
         <div class="result-file" title="${escapeHtml(e.file)}">${escapeHtml(e.file)}</div>
         <div class="result-rule">
           <span class="result-rule-badge ${display.sev}"><svg class="icon"><use href="#icon-${display.icon}"/></svg></span>
-          <span class="result-rule-text">${escapeHtml(e.rule)}</span>
+          <span class="result-rule-text" title="${escapeHtml(e.rule)}">${escapeHtml(e.rule)}</span>
           ${changedBadge}
         </div>
-        <div class="result-key">${escapeHtml(e.key || "—")}</div>
+        <div class="result-key" title="${escapeHtml(e.key || "")}">${escapeHtml(e.key || "—")}</div>
         <div class="result-action">
           ${storageSupported ? `<button class="ignore-btn" data-index="${i}" title="Remember this exact value as a known false positive/accepted risk on this device only"><svg class="icon"><use href="#icon-x"/></svg> Ignore</button>` : ""}
         </div>
