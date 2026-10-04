@@ -130,6 +130,46 @@
       </div>
     </details>
 
+    <details class="faq-item" id="file-type-coverage">
+      <summary>Which languages and file types does it check?</summary>
+      <div class="faq-answer">
+        <p><strong>Full detection</strong> (variable/key names and value
+        patterns): Java, Python, JavaScript/TypeScript, Go, and C# source
+        code, plus these config formats: <code>.properties</code>,
+        <code>.yml</code>/<code>.yaml</code>, <code>.json</code>,
+        <code>.xml</code>, <code>.config</code>, <code>.ini</code>,
+        <code>.conf</code>, <code>.cfg</code>, and <code>.env</code>.</p>
+        <p><strong>Multi-line split-string detection</strong> (a secret
+        built up across several lines): Python's parenthesized-string
+        style, and Java/JavaScript-TypeScript/C#/Go's
+        <code>+</code>-operator style. <strong>Not covered:</strong> a
+        JavaScript/TypeScript template literal that spans multiple
+        lines.</p>
+        <p><strong>Any other file type - verified directly, and the two
+        products don't behave the same way:</strong> we tested a
+        <code>.rb</code> file containing a plain <code>password =
+        "..."</code> assignment and an AWS-style access key, and a
+        <code>Dockerfile</code> setting an env var to a password value.
+        Neither extension/filename is recognized by either product.</p>
+        <ul>
+          <li><strong>Desktop app:</strong> an unrecognized file is
+          copied through completely untouched - no scanning at all.
+          Both the plain password and the AWS-style key came through in
+          plaintext in our test.</li>
+          <li><strong>Online scanner:</strong> an unrecognized file
+          still gets a lighter pass - value-shape pattern matching only,
+          with no key-name matching. In our test this caught the
+          AWS-style key (its shape is recognizable on its own) but not
+          the plain <code>password = "..."</code> assignment or the
+          Dockerfile's env var, since neither value looks like a
+          recognizable secret shape by itself.</li>
+        </ul>
+        <p>For any language or file type outside full detection,
+        <strong>review the output yourself before sharing it - don't
+        assume it's been fully cleaned.</strong></p>
+      </div>
+    </details>
+
     <details class="faq-item" id="missed-secret">
       <summary>Why might a secret not be found?</summary>
       <div class="faq-answer">
