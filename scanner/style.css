@@ -1177,5 +1177,8 @@ a { color: inherit; }
 .results-summary strong { animation: badgePop 0.3s ease; }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+  /* The universal selector alone doesn't match ::before/::after - without
+     listing them explicitly, a pseudo-element transition/animation would
+     be invisible to this override (see css/style.css's identical fix). */
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
