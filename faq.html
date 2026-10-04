@@ -145,25 +145,33 @@
         <code>+</code>-operator style. <strong>Not covered:</strong> a
         JavaScript/TypeScript template literal that spans multiple
         lines.</p>
-        <p><strong>Any other file type - verified directly, and the two
-        products don't behave the same way:</strong> we tested a
-        <code>.rb</code> file containing a plain <code>password =
-        "..."</code> assignment and an AWS-style access key, and a
-        <code>Dockerfile</code> setting an env var to a password value.
-        Neither extension/filename is recognized by either product.</p>
-        <ul>
-          <li><strong>Desktop app:</strong> an unrecognized file is
-          copied through completely untouched - no scanning at all.
-          Both the plain password and the AWS-style key came through in
-          plaintext in our test.</li>
-          <li><strong>Online scanner:</strong> an unrecognized file
-          still gets a lighter pass - value-shape pattern matching only,
-          with no key-name matching. In our test this caught the
-          AWS-style key (its shape is recognizable on its own) but not
-          the plain <code>password = "..."</code> assignment or the
-          Dockerfile's env var, since neither value looks like a
-          recognizable secret shape by itself.</li>
-        </ul>
+        <p><strong>Any other file type</strong> (a lockfile,
+        <code>Dockerfile</code>, <code>.rb</code> script, README, etc. -
+        neither extension/filename is recognized): both products now
+        behave the same way, scanning it for a small set of
+        high-confidence secret <em>shapes</em> only - AWS access keys,
+        GitHub/Slack tokens, JWTs, private-key blocks, and URLs with
+        embedded credentials - with no key-name matching at all. We
+        tested a <code>.rb</code> file containing a plain
+        <code>password = "..."</code> assignment and an AWS-style access
+        key, and a <code>Dockerfile</code> setting an env var to a
+        password value: both products caught the AWS-style key (its
+        shape is recognizable on its own) but <strong>not</strong> the
+        plain <code>password = "..."</code> assignment or the
+        Dockerfile's env var, since neither value looks like a
+        recognizable secret shape by itself - that detection relies on
+        key-name awareness that only exists for the file types listed
+        under "Full detection" above. A broader set of shapes (plain IP
+        addresses, generic URLs, email addresses) was deliberately left
+        out of this fallback after testing it against a realistic
+        project full of lockfiles and docs and finding it was almost
+        entirely false positives - gem/package version numbers read as
+        IP addresses, lockfile registry URLs, and ordinary contact
+        emails.</p>
+        <p>Files recognized as binary, or over a 2MB size limit, are
+        still skipped and copied through untouched either way - the
+        scan results (and, on the desktop app, the Apply confirmation)
+        list how many files this applied to and why.</p>
         <p>For any language or file type outside full detection,
         <strong>review the output yourself before sharing it - don't
         assume it's been fully cleaned.</strong></p>
