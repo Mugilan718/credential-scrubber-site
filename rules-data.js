@@ -74,7 +74,7 @@ const RULES = {
     },
     {
       "name": "bearer_token",
-      "regex": "(?i)bearer\\s+[A-Za-z0-9\\-._~+/]+=*"
+      "regex": "(?i)bearer\\s+([A-Za-z0-9\\-._~+/]{20,}=*)"
     },
     {
       "name": "private_key_block",
@@ -122,7 +122,8 @@ const RULES = {
     "n/a",
     "todo",
     "fixme",
-    "insert_secret_here"
+    "insert_secret_here",
+    "your_bearer_token_here"
   ]
 };
 

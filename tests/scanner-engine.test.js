@@ -1566,6 +1566,60 @@ await test("a fallback finding respects placeholder mode (typed token, same valu
 });
 
 // -----------------------------------------------------------------------
+// bearer_token regression tests (mirrors engine.py's rules_default.yaml
+// comment on the pattern): previously, "bearer\s+[A-Za-z0-9\-._~+/]+=*"
+// matched ordinary prose ("a bearer token in the header") because any
+// single word after "bearer" satisfied it, and the placeholder allow-list
+// was checked against the WHOLE match ("Bearer YOUR_TOKEN_HERE") instead of
+// just the token portion, so a documented placeholder was never recognized
+// as one. Fixed by (1) a {20,} minimum length on the token, and (2)
+// capturing the token in a group so isPlaceholder() can check it alone.
+// -----------------------------------------------------------------------
+
+console.log("\nbearer_token bug fix:");
+
+await test("bearer prose is not flagged", () => {
+  const files = [{ path: "AUTH.rst", content: "Send requests with a bearer token in the Authorization header.\n" }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.ok(sanitizedFiles[0].content.includes("bearer token"));
+});
+
+await test("bearer placeholder is not flagged", () => {
+  const files = [{ path: "AUTH.rst", content: "Authorization: Bearer YOUR_BEARER_TOKEN_HERE\n" }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.ok(sanitizedFiles[0].content.includes("YOUR_BEARER_TOKEN_HERE"));
+});
+
+await test("a realistic bearer token is still redacted", () => {
+  const fakeToken = "qXz9K2mN8pL4vR7tY1wA6sD3fG5hJ0cE9rT2";
+  const files = [{ path: "auth.properties", content: `Authorization: Bearer ${fakeToken}\n` }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "bearer_token");
+  assert.ok(!sanitizedFiles[0].content.includes(fakeToken));
+});
+
+await test("bearer placeholder in a config file (redactConfigLine's separate code path) is not flagged", () => {
+  const entries = [];
+  const line = "Authorization: Bearer YOUR_BEARER_TOKEN_HERE\n";
+  const result = redactConfigLine(line, 1, "settings.properties", entries);
+  assert.strictEqual(entries.length, 0);
+  assert.strictEqual(result, line);
+});
+
+await test("a realistic bearer token in a config file is still redacted", () => {
+  const entries = [];
+  const fakeToken = "qXz9K2mN8pL4vR7tY1wA6sD3fG5hJ0cE9rT2";
+  const line = `Authorization: Bearer ${fakeToken}\n`;
+  const result = redactConfigLine(line, 1, "settings.properties", entries);
+  assert.strictEqual(entries.length, 1);
+  assert.strictEqual(entries[0].rule, "bearer_token");
+  assert.ok(!result.includes(fakeToken));
+});
+
+// -----------------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;

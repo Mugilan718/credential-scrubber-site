@@ -140,7 +140,7 @@ const FALLBACK_VALUE_PATTERNS = [
   ["github_token", /\bgh[pousr]_[A-Za-z0-9]{36}\b/],
   ["slack_token", /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/],
   ["jwt_token", /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/],
-  ["bearer_token", /bearer\s+[A-Za-z0-9\-._~+/]+=*/i],
+  ["bearer_token", /bearer\s+([A-Za-z0-9\-._~+/]{20,}=*)/i],
   ["private_key_block", /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----/],
   ["email_address", /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/],
 ];
@@ -157,6 +157,7 @@ const FALLBACK_PLACEHOLDER_ALLOWLIST = [
   "changeme", "change_me", "your_api_key_here", "your-api-key-here", "yourapikeyhere",
   "example", "dummy", "placeholder", "xxxxxxxx", "test123", "localhost", "127.0.0.1",
   "0.0.0.0", "none", "null", "n/a", "todo", "fixme", "insert_secret_here",
+  "your_bearer_token_here",
 ];
 
 // BASE_* below is the shared ruleset exactly as rules-data.js/window.RULES
@@ -426,6 +427,20 @@ function isPlaceholder(value) {
   return PLACEHOLDER_ALLOWLIST.has(v);
 }
 
+// The text an isPlaceholder() check should use for a VALUE_PATTERNS match:
+// its first capturing group if the pattern defines one, or the whole match
+// otherwise. Currently only bearer_token's regex captures a group -
+// isolating the token from its literal "bearer " prefix, so a placeholder
+// allow-list entry for the token itself (e.g. "your_bearer_token_here") is
+// actually matched instead of being compared against "bearer
+// your_bearer_token_here" as a whole, which would never be on the list.
+// Mirrors engine.py's _value_pattern_placeholder_check_text(). Every other
+// value_pattern has no group, so m[1] is undefined and this is identical to
+// m[0] - unaffected.
+function valuePatternPlaceholderCheckText(m) {
+  return m.length > 1 && m[1] !== undefined ? m[1] : m[0];
+}
+
 function shannonEntropy(s) {
   if (!s) return 0;
   const freq = {};
@@ -532,12 +547,23 @@ function redactConfigLine(line, lineNo, filename, reportEntries, registry = null
     return beforeValue + quoteWrap(value, replacement) + afterValue;
   }
 
-  if (isPlaceholder(value)) return line;
-
   let valueMatchedName = null;
+  // Defaults to the whole value (identical to the pre-existing behavior)
+  // unless the matched pattern captures a group (see
+  // valuePatternPlaceholderCheckText()'s comment) - checked after the loop,
+  // not before, so it reflects whichever pattern (if any) actually matched.
+  let placeholderCheckText = value;
   for (const [name, pattern] of VALUE_PATTERNS) {
-    if (pattern.test(value)) { valueMatchedName = name; break; }
+    const m = value.match(pattern);
+    if (m) {
+      valueMatchedName = name;
+      placeholderCheckText = valuePatternPlaceholderCheckText(m);
+      break;
+    }
   }
+
+  if (isPlaceholder(placeholderCheckText)) return line;
+
   const entropyFlag = looksHighEntropy(value);
 
   if (valueMatchedName || entropyFlag) {
@@ -574,7 +600,7 @@ function redactValuePatternsOnly(line, lineNo, filename, reportEntries, registry
     if (allowedNames && !allowedNames.has(name)) continue;
     const m = modified.match(pattern);
     if (m) {
-      if (isPlaceholder(m[0])) continue;
+      if (isPlaceholder(valuePatternPlaceholderCheckText(m))) continue;
       const reportedRule = rulePrefix ? `${rulePrefix}:${name}` : name;
       const replacement = registry ? registry.getOrCreate(categoryForValuePattern(name), m[0]) : MASK;
       reportEntries.push({ file: filename, line: lineNo, key: null, rule: reportedRule, before: m[0], after: replacement });
@@ -608,7 +634,7 @@ function redactCodeLine(line, lang, lineNo, filename, reportEntries, registry = 
   for (const [name, pattern] of VALUE_PATTERNS) {
     const m = modified.match(pattern);
     if (m && !alreadyRedactedText(modified.slice(m.index, m.index + m[0].length), registry)) {
-      if (isPlaceholder(m[0])) continue;
+      if (isPlaceholder(valuePatternPlaceholderCheckText(m))) continue;
       const replacement = registry ? registry.getOrCreate(categoryForValuePattern(name), m[0]) : MASK;
       reportEntries.push({ file: filename, line: lineNo, key: null, rule: name, before: m[0], after: replacement });
       modified = modified.replace(pattern, replacement);
