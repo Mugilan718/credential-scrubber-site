@@ -182,6 +182,35 @@ const CODE_PATTERNS = (SHARED_RULES && SHARED_RULES.code_patterns)
     )
   : FALLBACK_CODE_PATTERNS;
 
+// The high-confidence subset of VALUE_PATTERNS applied to a file
+// classifyFile() doesn't recognize (see scanFiles()'s classification===null
+// branch, and redactValuePatternsOnly()'s allowedNames param) - unrelated
+// to the FALLBACK_* constants above (this module's own hardcoded snapshot,
+// used only if rules-data.js fails to load). Named differently here to
+// avoid that collision; mirrors engine.py's FALLBACK_VALUE_PATTERN_NAMES -
+// keep both lists in sync if either changes. Measured against a realistic
+// project (lockfiles, docs, READMEs): the broader patterns (ipv4_address,
+// ipv6_address, generic_url, email_address, bearer_token) are almost
+// entirely false positives on unrecognized file types - version numbers,
+// documentation IP ranges, contact emails, and (for bearer_token) ordinary
+// prose - so only these seven, specific-enough-to-a-real-secret patterns
+// are applied to a file type this tool doesn't otherwise understand.
+const UNRECOGNIZED_FILE_VALUE_PATTERN_NAMES = new Set([
+  "aws_access_key_id",
+  "aws_secret_key_assignment",
+  "github_token",
+  "slack_token",
+  "jwt_token",
+  "private_key_block",
+  "url_with_credentials",
+]);
+// Prefixes a fallback-sourced finding's "rule" field (e.g.
+// "fallback:aws_access_key_id") so it's distinguishable in the report from
+// the same pattern firing on a recognized config/code file, and shared
+// verbatim with engine.py's FALLBACK_RULE_PREFIX so the two products report
+// identically.
+const UNRECOGNIZED_FILE_RULE_PREFIX = "fallback";
+
 // The lists detection actually consults. Equal to the base by default;
 // temporarily reassigned (never mutated in place - always to a brand-new
 // array/Set) to an override-merged view for the duration of a single
@@ -523,14 +552,32 @@ function redactConfigLine(line, lineNo, filename, reportEntries, registry = null
   return line;
 }
 
-function redactValuePatternsOnly(line, lineNo, filename, reportEntries, registry = null) {
+/**
+ * `allowedNames` (optional): restrict matching to only these value_pattern
+ * names instead of all of them - used by scanFiles()'s unrecognized-file
+ * branch to scope detection to UNRECOGNIZED_FILE_VALUE_PATTERN_NAMES. null
+ * (the default) matches every value_pattern, exactly as before this
+ * parameter existed.
+ *
+ * `rulePrefix` (optional): prefixed onto the reported "rule" field (e.g.
+ * "fallback:aws_access_key_id") so a fallback-sourced finding is
+ * distinguishable from the same pattern firing on a recognized config/code
+ * file - including for the ignore system (ignoreKeyFor() keys on the exact
+ * rule string), so ignoring one never silently suppresses the other. null
+ * (the default) reports the bare pattern name, exactly as before this
+ * parameter existed. Never affects categoryForValuePattern() lookups,
+ * which stay keyed on the bare name.
+ */
+function redactValuePatternsOnly(line, lineNo, filename, reportEntries, registry = null, allowedNames = null, rulePrefix = null) {
   let modified = line;
   for (const [name, pattern] of VALUE_PATTERNS) {
+    if (allowedNames && !allowedNames.has(name)) continue;
     const m = modified.match(pattern);
     if (m) {
       if (isPlaceholder(m[0])) continue;
+      const reportedRule = rulePrefix ? `${rulePrefix}:${name}` : name;
       const replacement = registry ? registry.getOrCreate(categoryForValuePattern(name), m[0]) : MASK;
-      reportEntries.push({ file: filename, line: lineNo, key: null, rule: name, before: m[0], after: replacement });
+      reportEntries.push({ file: filename, line: lineNo, key: null, rule: reportedRule, before: m[0], after: replacement });
       modified = modified.replace(pattern, replacement);
     }
   }
@@ -804,11 +851,21 @@ function classifyFile(path) {
  * above). The base rules-data.js/window.RULES data is never modified,
  * regardless of what's passed here - always restored before this function
  * returns, even if it throws.
- * Returns { sanitizedFiles: [{path, content}], reportEntries: [...] }
+ * Returns { sanitizedFiles: [{path, content}], reportEntries: [...],
+ * unscannedFiles: [{path, reason}] } - unscannedFiles is every file copied
+ * through with zero scanning (binary:true in sanitizedFiles), not a
+ * finding or a problem, just the boundary of what this tool reads as text.
  */
 function scanFiles(files, options = {}) {
   const reportEntries = [];
   const sanitizedFiles = [];
+  // Every file that ends up with binary:true below - copied through with
+  // zero scanning of any kind (no size-limit guard exists on this side; the
+  // only reason a file lands here is isLikelyTextFile() saying no). Mirrors
+  // engine.py's "unscanned_files" (see its _walk_and_classify() docstring),
+  // though this side has no "oversize" reason since no size guard exists
+  // here - every entry's reason is "binary".
+  const unscannedFiles = [];
   const registry = options.placeholderMode ? new PlaceholderRegistry() : null;
 
   const savedKeyPatternSources = KEY_PATTERN_SOURCES;
@@ -843,14 +900,18 @@ function scanFiles(files, options = {}) {
         });
         sanitizedFiles.push({ path: file.path, content: out.join("\n") });
       } else if (classification === null && isLikelyTextFile(file.path)) {
-        const out = lines.map((l, i) => redactValuePatternsOnly(l, i + 1, file.path, reportEntries, registry));
+        const out = lines.map((l, i) => redactValuePatternsOnly(
+          l, i + 1, file.path, reportEntries, registry,
+          UNRECOGNIZED_FILE_VALUE_PATTERN_NAMES, UNRECOGNIZED_FILE_RULE_PREFIX,
+        ));
         sanitizedFiles.push({ path: file.path, content: out.join("\n") });
       } else {
         sanitizedFiles.push({ path: file.path, content: file.content, binary: true });
+        unscannedFiles.push({ path: file.path, reason: "binary" });
       }
     }
 
-    return { sanitizedFiles, reportEntries };
+    return { sanitizedFiles, reportEntries, unscannedFiles };
   } finally {
     KEY_PATTERN_SOURCES = savedKeyPatternSources;
     PLACEHOLDER_ALLOWLIST = savedPlaceholderAllowlist;
@@ -1057,19 +1118,19 @@ async function collectFilesFromDirectoryHandle(dirHandle, options = {}) {
         await walk(entry, entryPath);
       } else if (entry.kind === "file") {
         if (isBinaryByName(entryPath)) {
-          skipped.push(entryPath);
+          skipped.push({ path: entryPath, reason: "binary" });
           continue;
         }
         try {
           const file = await entry.getFile();
           if (file.size > maxBytes) {
-            skipped.push(entryPath);
+            skipped.push({ path: entryPath, reason: "oversize" });
             continue;
           }
           const content = await file.text();
           files.push({ path: entryPath, content });
         } catch (e) {
-          skipped.push(entryPath);
+          skipped.push({ path: entryPath, reason: "binary" });
         }
       }
     }

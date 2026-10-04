@@ -1168,7 +1168,7 @@ await test("binary-by-name files are skipped, not read", async () => {
     isBinaryByName: (name) => name.toLowerCase().endsWith(".png"),
   });
   assert.strictEqual(files.length, 1);
-  assert.deepStrictEqual(skipped, ["logo.png"]);
+  assert.deepStrictEqual(skipped, [{ path: "logo.png", reason: "binary" }]);
 });
 
 await test("oversized files are skipped, not read", async () => {
@@ -1177,7 +1177,7 @@ await test("oversized files are skipped, not read", async () => {
   const { files, skipped } = await collectFilesFromDirectoryHandle(dir, { maxFileBytes: 50 });
   assert.strictEqual(files.length, 1);
   assert.strictEqual(files[0].path, "small.txt");
-  assert.deepStrictEqual(skipped, ["big.txt"]);
+  assert.deepStrictEqual(skipped, [{ path: "big.txt", reason: "oversize" }]);
 });
 
 await test("end-to-end: files collected from a directory handle feed straight into scanFiles()", async () => {
@@ -1472,6 +1472,97 @@ await test("reapplySavedSelection: never mutates any of its input arrays", () =>
 await test("reapplySavedSelection: an empty saved selection (first-ever visit) defaults every current path to checked", () => {
   const result = reapplySavedSelection(["a.txt", "b.txt"], [], []);
   assert.deepStrictEqual([...result].sort(), ["a.txt", "b.txt"]);
+});
+
+// -----------------------------------------------------------------------
+// Unrecognized-file fallback restriction (mirrors engine.py's
+// FALLBACK_VALUE_PATTERN_NAMES): classifyFile() returns null for a
+// lockfile/Dockerfile/.rb script/etc., and scanFiles() scans it with a
+// high-confidence SUBSET of value_patterns instead of all of them -
+// measured against a realistic project and found the broader patterns
+// (ipv4_address, generic_url, email_address, bearer_token) are almost
+// entirely false positives (lockfile version numbers, doc example IPs/
+// emails, ordinary prose) on a file type this tool doesn't recognize.
+// -----------------------------------------------------------------------
+
+console.log("\nUnrecognized-file fallback - restricted to high-confidence value patterns:");
+
+await test("an AWS access key in an unrecognized-extension file is still redacted, rule is fallback-prefixed", () => {
+  const files = [{ path: "config.rb", content: 'aws_key = "AKIAIOSFODNN7EXAMPLE"' }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:aws_access_key_id");
+  assert.strictEqual(reportEntries[0].key, null);
+  assert.ok(!sanitizedFiles[0].content.includes("AKIAIOSFODNN7EXAMPLE"));
+});
+
+await test("a lockfile version number in an unrecognized-extension file is NOT masked", () => {
+  const files = [{ path: "Gemfile.lock", content: "    rails (7.0.4.3)\n" }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.ok(sanitizedFiles[0].content.includes("7.0.4.3"));
+});
+
+await test("a plain URL (no embedded credentials) in an unrecognized-extension file is NOT masked", () => {
+  const files = [{ path: "README.rst", content: "API docs: https://api.example.com/v1/health\n" }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.ok(sanitizedFiles[0].content.includes("https://api.example.com/v1/health"));
+});
+
+await test("an email address in an unrecognized-extension file is NOT masked", () => {
+  const files = [{ path: "CONTRIBUTING.rst", content: "Questions: dev-team@example.com\n" }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.ok(sanitizedFiles[0].content.includes("dev-team@example.com"));
+});
+
+await test("a URL WITH embedded credentials in an unrecognized-extension file IS masked (in the high-confidence subset)", () => {
+  const files = [{ path: "notes.rb", content: "endpoint = 'https://user:hunter2@example.com/db'\n" }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:url_with_credentials");
+  assert.ok(!sanitizedFiles[0].content.includes("hunter2"));
+});
+
+await test("a plain password assignment in an unrecognized-extension file is NOT redacted (documented limit - no key-name awareness outside config/code files)", () => {
+  const files = [{ path: "notes.txt", content: 'password = "hunter2"\n' }];
+  const { reportEntries, sanitizedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.ok(sanitizedFiles[0].content.includes("hunter2"));
+});
+
+await test("a binary-by-name file is still copied through untouched and reported in unscannedFiles", () => {
+  const files = [{ path: "photo.png", content: "AKIAIOSFODNN7EXAMPLE" }];
+  const { reportEntries, sanitizedFiles, unscannedFiles } = scanFiles(files);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.strictEqual(sanitizedFiles[0].binary, true);
+  assert.deepStrictEqual(unscannedFiles, [{ path: "photo.png", reason: "binary" }]);
+});
+
+await test("a fallback finding is suppressible via the ignore system (key: null)", async () => {
+  const files = [{ path: "config.rb", content: 'aws_key = "AKIAIOSFODNN7EXAMPLE"\n' }];
+  const scan = scanFiles(files);
+  assert.strictEqual(scan.reportEntries.length, 1);
+  const ignoreKey = ignoreKeyFor("config.rb", null, "fallback:aws_access_key_id");
+  const valueHash = await hashValue("AKIAIOSFODNN7EXAMPLE");
+  const ignoreMap = { [ignoreKey]: valueHash };
+  const reconciled = await applyIgnores(scan, ignoreMap);
+  assert.strictEqual(reconciled.reportEntries.length, 0, "a fallback finding (key=null) must be suppressible via the ignore system");
+});
+
+await test("a fallback finding respects placeholder mode (typed token, same value across files correlates)", () => {
+  const files = [
+    { path: "a.rb", content: 'key1 = "AKIAIOSFODNN7EXAMPLE"\n' },
+    { path: "b.rb", content: 'key2 = "AKIAIOSFODNN7EXAMPLE"\n' },
+  ];
+  const { reportEntries, sanitizedFiles } = scanFiles(files, { placeholderMode: true });
+  assert.strictEqual(reportEntries.length, 2);
+  const a = sanitizedFiles.find((f) => f.path === "a.rb");
+  const b = sanitizedFiles.find((f) => f.path === "b.rb");
+  assert.ok(a.content.includes("<API_KEY_1>"));
+  assert.ok(b.content.includes("<API_KEY_1>"));
+  assert.ok(!a.content.includes("AKIAIOSFODNN7EXAMPLE"));
 });
 
 // -----------------------------------------------------------------------

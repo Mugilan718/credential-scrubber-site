@@ -8,6 +8,9 @@
   const filesScannedCount = document.getElementById("filesScannedCount");
   const redactionCount = document.getElementById("redactionCount");
   const resultsTable = document.getElementById("resultsTable");
+  const unscannedFilesNotice = document.getElementById("unscannedFilesNotice");
+  const unscannedFilesSummary = document.getElementById("unscannedFilesSummary");
+  const unscannedFilesList = document.getElementById("unscannedFilesList");
   const generateBtn = document.getElementById("generateBtn");
   const downloadGeneratedBtn = document.getElementById("downloadGeneratedBtn");
   const staleZipNote = document.getElementById("staleZipNote");
@@ -58,6 +61,11 @@
   let lastSanitizedFiles = [];
   let lastReportEntries = [];
   let lastFilesScanned = 0;
+  // Every file copied through (or, for the directory-handle read path,
+  // simply omitted - see scanDirectoryHandle()'s comment) with zero
+  // scanning of any kind, from THIS most recent scan - {path, reason}. Used
+  // by renderUnscannedFilesNotice() and the Generate confirmation.
+  let lastUnscannedFiles = [];
 
   // How the CURRENT results' files were obtained, for "Scan again"
   // (below): "handle" means a FileSystemDirectoryHandle (remembered
@@ -110,6 +118,15 @@
   let expandedFolders = new Set();
   let pendingReadable = [];
   let pendingRawFilesForZip = [];
+  // Files that never even reached scanFiles() - binary-by-name or over
+  // MAX_FILE_BYTES, caught at the read stage (see handleFileList()/
+  // collectFilesFromDirectoryHandle() above) - as {path, reason}, purely
+  // for the "N files were copied without being checked" notice; distinct
+  // from pendingRawFilesForZip, which some of these also end up in (to be
+  // mirrored into the generated zip) and some don't (the directory-handle
+  // read path has never included its own skips in the zip - see its
+  // assignment below) - this list exists regardless, for the notice.
+  let pendingUnscannedFiles = [];
   // All paths seen this time round (before any filtering choice) and the
   // saved filter record (if any) a saved-selection prompt is currently
   // deciding between - both cleared once the user picks "use last"/"start
@@ -180,7 +197,11 @@
   const DEFAULT_RULE_DISPLAY = { icon: "hash", sev: "sev-cyan" };
 
   function ruleDisplayFor(rule) {
-    const base = rule.startsWith("multiline_concat_") ? rule.slice("multiline_concat_".length) : rule;
+    let base = rule.startsWith("multiline_concat_") ? rule.slice("multiline_concat_".length) : rule;
+    // "fallback:aws_access_key_id" etc. (see UNRECOGNIZED_FILE_RULE_PREFIX in
+    // scanner-engine.js) - strip the prefix so these still get the specific
+    // icon/severity for their underlying pattern, not the generic default.
+    if (base.startsWith("fallback:")) base = base.slice("fallback:".length);
     return RULE_DISPLAY[base] || DEFAULT_RULE_DISPLAY;
   }
 
@@ -263,10 +284,14 @@
 
     for (const file of files) {
       const relPath = file.relativePath || file.webkitRelativePath || file.name;
-      if (isBinaryByName(relPath) || file.size > MAX_FILE_BYTES) {
+      if (isBinaryByName(relPath)) {
         // Carried through to the zip untouched, so the downloaded copy is
         // a complete mirror of the original folder.
-        rawFilesForZip.push({ path: relPath, content: file, binary: true, rawFile: true });
+        rawFilesForZip.push({ path: relPath, content: file, binary: true, rawFile: true, unscannedReason: "binary" });
+        continue;
+      }
+      if (file.size > MAX_FILE_BYTES) {
+        rawFilesForZip.push({ path: relPath, content: file, binary: true, rawFile: true, unscannedReason: "oversize" });
         continue;
       }
       try {
@@ -277,7 +302,8 @@
       }
     }
 
-    await presentFolderTree(readable, rawFilesForZip);
+    const unscanned = rawFilesForZip.map((f) => ({ path: f.path, reason: f.unscannedReason }));
+    await presentFolderTree(readable, rawFilesForZip, unscanned);
   }
 
   /**
@@ -289,7 +315,7 @@
    * Does NOT scan yet - scanning happens only once the user confirms via
    * "Scan selected files".
    */
-  async function presentFolderTree(readable, rawFilesForZip) {
+  async function presentFolderTree(readable, rawFilesForZip, unscannedFiles = []) {
     // scanFiles() silently drops any path under a SKIP_DIRS segment
     // (.git, node_modules, etc.) regardless of what's checked - filtering
     // them out of the tree too keeps "N of M files selected" honest and
@@ -298,6 +324,7 @@
     const notSkipped = (f) => !f.path.split("/").some((seg) => SKIP_DIRS.has(seg));
     pendingReadable = readable.filter(notSkipped);
     pendingRawFilesForZip = rawFilesForZip.filter(notSkipped);
+    pendingUnscannedFiles = unscannedFiles.filter(notSkipped);
 
     const allPaths = pendingReadable.map((f) => f.path).concat(pendingRawFilesForZip.map((f) => f.path));
     pendingAllPaths = allPaths;
@@ -313,7 +340,7 @@
     if (!folderTreeState) {
       // No tree UI available for some reason - fall back to scanning
       // everything, rather than leaving the user stuck on a blank page.
-      await scanReadableFiles(pendingReadable, pendingRawFilesForZip);
+      await scanReadableFiles(pendingReadable, pendingRawFilesForZip, pendingUnscannedFiles);
       return;
     }
 
@@ -481,7 +508,8 @@
 
       const filteredReadable = filterFilesByCheckedPaths(pendingReadable, checkedPaths);
       const filteredRaw = filterFilesByCheckedPaths(pendingRawFilesForZip, checkedPaths);
-      await scanReadableFiles(filteredReadable, filteredRaw);
+      const filteredUnscanned = filterFilesByCheckedPaths(pendingUnscannedFiles, checkedPaths);
+      await scanReadableFiles(filteredReadable, filteredRaw, filteredUnscanned);
     });
   }
 
@@ -503,9 +531,14 @@
    * (from the classic file-input/drag-drop flow OR Phase 5's remembered-
    * folder flow) through detection, ignore-reconciliation, rendering, and
    * scan-history persistence. `rawFilesForZip` carries through any
-   * skipped binary/oversized files untouched, same as before.
+   * skipped binary/oversized files untouched, same as before. `unscannedFiles`
+   * ({path, reason}) is everything that never reached scanFiles() at all
+   * (same binary/oversize checks, read stage) - merged below with
+   * scanFiles()'s own unscannedFiles (a file that passed those checks but
+   * scanFiles()'s narrower isLikelyTextFile() still treats as binary) into
+   * one list for the "N files were copied without being checked" notice.
    */
-  async function scanReadableFiles(readable, rawFilesForZip, { isRescan = false } = {}) {
+  async function scanReadableFiles(readable, rawFilesForZip, unscannedFiles = [], { isRescan = false } = {}) {
     // A re-scan ("Scan again") only invalidates whatever was already
     // generated for download (see Phase B) - a brand-new scan of a freshly
     // chosen folder has no such prior result to speak of, so it gets a
@@ -550,6 +583,8 @@
     lastSanitizedFiles = scanResult.sanitizedFiles.concat(rawFilesForZip || []);
     lastReportEntries = scanResult.reportEntries;
     lastFilesScanned = readable.length;
+    lastUnscannedFiles = (unscannedFiles || []).concat(scanResult.unscannedFiles || []);
+    renderUnscannedFilesNotice(lastUnscannedFiles);
     // Reflects everything actually suppressed/restored in THIS pass -
     // whether ignored earlier this session or persisted from a previous
     // one - rather than being wiped on every scan regardless of whether
@@ -684,6 +719,39 @@
       </div>`;
     });
     resultsTable.innerHTML = html;
+  }
+
+  const UNSCANNED_REASON_LABELS = {
+    binary: "unsupported binary file type",
+    oversize: "over the 2 MB fallback-scan size limit",
+  };
+
+  /**
+   * Files copied through with zero scanning of any kind (see
+   * scanReadableFiles()'s merge of the read-stage skips with scanFiles()'s
+   * own unscannedFiles) - not findings, not a problem, just the boundary
+   * of what this tool can read as text. A notice, not a blocker: rendered
+   * as a collapsed <details> so it's visible but out of the way, shown
+   * alongside the results and before Generate is clicked.
+   */
+  function renderUnscannedFilesNotice(unscannedFiles) {
+    if (!unscannedFilesNotice) return;
+    if (!unscannedFiles || !unscannedFiles.length) {
+      unscannedFilesNotice.classList.add("hidden");
+      unscannedFilesList.innerHTML = "";
+      return;
+    }
+    const byReason = {};
+    unscannedFiles.forEach((f) => {
+      (byReason[f.reason] = byReason[f.reason] || []).push(f.path);
+    });
+    const word = unscannedFiles.length === 1 ? "file was" : "files were";
+    unscannedFilesSummary.textContent = `${unscannedFiles.length} ${word} copied without being checked`;
+    unscannedFilesList.innerHTML = Object.entries(byReason).map(([reason, paths]) => {
+      const label = UNSCANNED_REASON_LABELS[reason] || reason;
+      return paths.map((p) => `<li>${escapeHtml(p)} <span class="unscanned-reason">(${escapeHtml(label)})</span></li>`).join("");
+    }).join("");
+    unscannedFilesNotice.classList.remove("hidden");
   }
 
   // Clicking "Ignore" only asks for confirmation - it does NOT itself
@@ -1043,11 +1111,16 @@
     if (folderFilterPromptState) folderFilterPromptState.classList.add("hidden");
     scanningText.textContent = "Reading remembered folder…";
 
-    const { files: readable } = await collectFilesFromDirectoryHandle(handle, {
+    const { files: readable, skipped } = await collectFilesFromDirectoryHandle(handle, {
       maxFileBytes: MAX_FILE_BYTES,
       isBinaryByName,
     });
-    await presentFolderTree(readable, []);
+    // Unlike handleFileList()'s rawFilesForZip, a skipped file here was
+    // never read into memory at all (see collectFilesFromDirectoryHandle()'s
+    // size/binary checks happening before any read) - nothing to carry
+    // into the zip, but `skipped` is still exactly what the "N files were
+    // copied without being checked" notice needs.
+    await presentFolderTree(readable, [], skipped);
   }
 
   if (pickRememberedFolderBtn) {
@@ -1166,13 +1239,14 @@
           }
           if (permission === "granted") {
             scanningText.textContent = "Re-reading folder from disk…";
-            const { files: freshReadable } = await collectFilesFromDirectoryHandle(lastScanHandle, {
+            const { files: freshReadable, skipped: freshSkipped } = await collectFilesFromDirectoryHandle(lastScanHandle, {
               maxFileBytes: MAX_FILE_BYTES,
               isBinaryByName,
             });
             const notSkipped = (f) => !f.path.split("/").some((seg) => SKIP_DIRS.has(seg));
             pendingReadable = freshReadable.filter(notSkipped);
             pendingRawFilesForZip = []; // handle-based reads never produce rawFilesForZip - see presentFolderTree()
+            pendingUnscannedFiles = freshSkipped.filter(notSkipped);
             pendingAllPaths = pendingReadable.map((f) => f.path);
             currentTree = buildFileTree(pendingAllPaths);
             treeIndex = indexFileTree(currentTree);
@@ -1197,7 +1271,8 @@
       // rather than resetting to "everything checked."
       const filteredReadable = filterFilesByCheckedPaths(pendingReadable, checkedPaths);
       const filteredRaw = filterFilesByCheckedPaths(pendingRawFilesForZip, checkedPaths);
-      await scanReadableFiles(filteredReadable, filteredRaw, { isRescan: true });
+      const filteredUnscanned = filterFilesByCheckedPaths(pendingUnscannedFiles, checkedPaths);
+      await scanReadableFiles(filteredReadable, filteredRaw, filteredUnscanned, { isRescan: true });
     });
   }
 
@@ -1206,8 +1281,10 @@
     lastSanitizedFiles = [];
     lastReportEntries = [];
     lastFilesScanned = 0;
+    lastUnscannedFiles = [];
     pendingReadable = [];
     pendingRawFilesForZip = [];
+    pendingUnscannedFiles = [];
     pendingAllPaths = [];
     pendingSavedFilter = null;
     currentTree = null;
@@ -1218,6 +1295,7 @@
     if (scanAgainSourceNote) scanAgainSourceNote.classList.add("hidden");
     resetGeneratedZipState();
     renderIgnoredFindings();
+    renderUnscannedFilesNotice(lastUnscannedFiles);
     resultsState.classList.add("hidden");
     dropZone.classList.remove("hidden");
   });
