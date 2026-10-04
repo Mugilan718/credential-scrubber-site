@@ -396,6 +396,7 @@
       <svg class="icon tree-icon"><use href="#icon-folder"/></svg>
       <span class="tree-name" title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</span>
       <span class="tree-count">${fileCount} file${fileCount === 1 ? "" : "s"}</span>
+      <button type="button" class="tree-only-btn" data-path="${escapeHtml(node.path)}" title="Check only this folder, uncheck everything else">Only</button>
     </div>`;
     if (expanded) {
       for (const child of node.children) {
@@ -418,6 +419,21 @@
 
   if (folderTreeList) {
     folderTreeList.addEventListener("click", (e) => {
+      const onlyBtn = e.target.closest(".tree-only-btn");
+      if (onlyBtn) {
+        const node = treeIndex.get(onlyBtn.dataset.path);
+        if (node) {
+          // "Select a folder" read literally - everything else unchecked,
+          // only this folder (and its descendants) checked. Addresses the
+          // likely source of "folder selection does nothing": since every
+          // file starts checked, checking an already-checked folder is a
+          // no-op - this is the one-click "scan only this" a user reaching
+          // for that mental model actually wants.
+          checkedPaths = new Set(collectFilePaths(node));
+          renderTree();
+        }
+        return;
+      }
       const toggleBtn = e.target.closest(".tree-toggle");
       if (!toggleBtn) return;
       const path = toggleBtn.dataset.path;

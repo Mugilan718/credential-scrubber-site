@@ -567,6 +567,45 @@ a { color: inherit; }
   flex-shrink: 0;
 }
 
+/* Revealed on row hover/focus rather than shown on every folder row at
+   once - a one-click "only this folder" action for the (likely) common
+   case of a user expecting "select a folder" to mean "scan just this",
+   which checking an already-checked folder (everything is checked by
+   default) can't express on its own. */
+.tree-only-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--glow-cyan);
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.tree-row:hover .tree-only-btn,
+.tree-row:focus-within .tree-only-btn,
+.tree-only-btn:focus-visible {
+  opacity: 1;
+}
+
+.tree-only-btn:hover {
+  text-decoration: underline;
+}
+
+/* Hover-to-reveal has no equivalent on a touch device (there's no hover
+   state to trigger it, and no pointer resting in place first) - always
+   visible there instead of being effectively unreachable. */
+@media (hover: none) {
+  .tree-only-btn {
+    opacity: 1;
+  }
+}
+
 .folder-tree-actions {
   display: flex;
   gap: 12px;
