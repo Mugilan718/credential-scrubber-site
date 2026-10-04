@@ -220,23 +220,80 @@ const UNRECOGNIZED_FILE_RULE_PREFIX = "fallback";
 // This is the unrecognized-file branch's own, separate detector for the
 // common case: a real key file, or a key pasted as-is into some other
 // unrecognized file type, spanning many physical lines. Mirrors engine.py's
-// _MULTILINE_PRIVATE_KEY_BLOCK exactly (see its comment for the full
-// rationale) - JS's native named-group syntax differs from Python's, so
-// this is its own regex literal rather than a shared string, but the
-// matched shape and masking behavior are identical.
+// _BEGIN_KEY_LINE/_END_KEY_LINE/_mask_multiline_private_key_blocks()
+// exactly (see their comments for the full rationale).
 //
 // Deliberately requires "PRIVATE KEY" in both the BEGIN and (if present)
 // END markers - a "-----BEGIN CERTIFICATE-----" block never matches, on
 // purpose; a certificate is public material, not a secret.
 //
-// The trailing `$` alternative (no `m` flag, so it anchors to the actual
-// end of the string, not the end of any line) is what masks all the way
-// to end-of-file when no END line is ever found, rather than leaving the
-// remainder of a truncated/corrupted key body sitting in the output
-// unmasked.
-const MULTILINE_PRIVATE_KEY_BLOCK = /(?<header>-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n)(?<body>(?:.*?\r?\n)*?)(?<footer>-----END [A-Z ]*PRIVATE KEY-----\r?\n?|$)/gi;
+// A BEGIN marker only starts a block when it's the WHOLE (trimmed) line -
+// only leading whitespace and one optional quote character may precede
+// it, and only an optional closing quote may follow - never in the middle
+// of a sentence. Without this, a document that merely *mentions* the
+// marker (a README explaining PEM format, a support ticket, ...) would
+// have the rest of its paragraph treated as key material.
+const BEGIN_KEY_LINE = /^[ \t]*["']?-----BEGIN ([A-Z ]*PRIVATE KEY)-----["']?[ \t]*$/i;
+const END_KEY_LINE = /^[ \t]*["']?-----END ([A-Z ]*PRIVATE KEY)-----["']?[ \t]*$/i;
+
+// What a line between BEGIN and (if present) END is allowed to look like
+// to still count as part of the key: base64 body text, a PEM encryption
+// header (only these two are recognized - deliberately not a generic
+// "anything with a colon" match, which would swallow unrelated prose too
+// easily), or blank (the conventional separator between encryption
+// headers and the base64 body). Only used to decide where to STOP
+// consuming lines when no END marker is found - see
+// maskMultilinePrivateKeyBlocks()'s comment.
+const BASE64_KEY_LINE = /^[A-Za-z0-9+/]+=*$/;
+const PEM_ENCRYPTION_HEADER_LINE = /^(Proc-Type|DEK-Info):/i;
 
 const LINE_ENDING = /\r?\n$/;
+
+function isKeyMaterialLine(stripped) {
+  if (stripped === "") return true;
+  return BASE64_KEY_LINE.test(stripped) || PEM_ENCRYPTION_HEADER_LINE.test(stripped);
+}
+
+/**
+ * Masks one already-identified block: `blockLines` is
+ * [header, ...body, footer] if `hasFooter` (a real END line was found) or
+ * [header, ...body] otherwise (consumption stopped at the first
+ * non-key-material line, or end of file). Mirrors engine.py's
+ * _mask_key_block_lines() - see its docstring for the masking approach
+ * (BEGIN/END kept as-is, body collapsed to one marker line + blanks,
+ * preserving `blockLines`'s own length).
+ *
+ * `entry.after` is deliberately the WHOLE masked block (not just the
+ * marker), so it spans the same number of lines as `entry.before` - see
+ * maskMultilinePrivateKeyBlocks()'s comment on why that symmetry matters
+ * for this site's post-scan ignore system.
+ */
+function maskKeyBlockLines(blockLines, hasFooter, reportEntries, filename, lineNo, registry) {
+  const whole = blockLines.join("");
+  if (isPlaceholder(whole)) return blockLines;
+
+  const marker = registry ? registry.getOrCreate("PRIVATE_KEY", whole) : MASK;
+  const header = blockLines[0];
+  const footer = hasFooter ? blockLines[blockLines.length - 1] : null;
+  const bodyLines = hasFooter ? blockLines.slice(1, -1) : blockLines.slice(1);
+
+  let maskedBody;
+  if (bodyLines.length) {
+    const firstEnding = (bodyLines[0].match(LINE_ENDING) || [""])[0];
+    const restEndings = bodyLines.slice(1).map((ln) => (ln.match(LINE_ENDING) || [""])[0]);
+    maskedBody = marker + firstEnding + restEndings.join("");
+  } else {
+    maskedBody = "";
+  }
+
+  const maskedWhole = header + maskedBody + (hasFooter ? footer : "");
+  reportEntries.push({ file: filename, line: lineNo, key: null, rule: `${UNRECOGNIZED_FILE_RULE_PREFIX}:private_key_block`, before: whole, after: maskedWhole });
+
+  const result = [header];
+  if (maskedBody) result.push(maskedBody);
+  if (hasFooter) result.push(footer);
+  return result;
+}
 
 /**
  * Finds and masks every real multi-line private-key block in `content`
@@ -244,45 +301,66 @@ const LINE_ENDING = /\r?\n$/;
  * same total line count as the input, so splitting the result back into
  * lines keeps every other finding's reported line number correct.
  *
- * Masking approach (mirrors engine.py's _mask_multiline_private_key_block()):
- * the BEGIN/END marker lines are kept as-is (never sensitive); the body
- * between them - which may be any number of lines - is collapsed to a
- * single MASK/placeholder marker on its first line, with every other body
- * line blanked (its own line ending kept, content emptied). This keeps the
- * block's (and so the file's) total line count identical to the original.
- *
- * `entry.after` is deliberately the WHOLE masked block (header + masked
- * body + footer), not just the inserted marker - so it spans the exact
- * same number of lines as `entry.before` (the whole original block). The
- * website's ignore system restores/re-masks a finding by splicing lines
- * starting at `entry.line` (see replaceAcrossLines()) rather than Python's
- * inline check-before-redacting; keeping before/after the same shape
- * (both "the whole block, as text") is what makes that splice symmetric
- * in both directions without any rule-specific special-casing there.
+ * A block starts at a line matching `BEGIN_KEY_LINE` (see its comment -
+ * excludes a mid-sentence mention of the marker). If a line matching
+ * `END_KEY_LINE` follows, everything up to and including it is the block,
+ * full stop - a real END marker is unambiguous evidence this is a genuine
+ * key, however short its body. Otherwise (no END line, possibly because
+ * the key was truncated, or the file simply ends) lines are consumed one
+ * at a time only while they still look like key material
+ * (`isKeyMaterialLine()`); consumption stops at the first line that
+ * doesn't, so a document that merely mentions the marker and then moves
+ * on to ordinary prose doesn't lose the rest of its content. In that
+ * no-END case, at least one non-blank key-material line must have been
+ * consumed for this to count as a real block at all - a bare mention with
+ * nothing resembling key material after it is left completely untouched.
  */
 function maskMultilinePrivateKeyBlocks(content, reportEntries, filename, registry = null) {
-  return content.replace(MULTILINE_PRIVATE_KEY_BLOCK, (whole, header, body, footer, offset) => {
-    if (isPlaceholder(whole)) return whole;
+  const lines = content.split(/(?<=\n)/); // splitlines(keepends=True)-equivalent
+  const output = [];
+  let i = 0;
+  const n = lines.length;
 
-    const lineNo = content.slice(0, offset).split("\n").length;
-    const marker = registry ? registry.getOrCreate("PRIVATE_KEY", whole) : MASK;
-
-    // splitlines(keepends=True)-equivalent: split right after each line
-    // ending, so every piece keeps its own terminator attached.
-    const bodyLines = body ? body.split(/(?<=\r?\n)/) : [];
-    let maskedBody;
-    if (bodyLines.length) {
-      const firstEnding = (bodyLines[0].match(LINE_ENDING) || [""])[0];
-      const restEndings = bodyLines.slice(1).map((ln) => (ln.match(LINE_ENDING) || [""])[0]);
-      maskedBody = marker + firstEnding + restEndings.join("");
-    } else {
-      maskedBody = body; // BEGIN immediately followed by END (or EOF) - nothing to mask.
+  while (i < n) {
+    const stripped = lines[i].replace(LINE_ENDING, "");
+    if (!BEGIN_KEY_LINE.test(stripped)) {
+      output.push(lines[i]);
+      i += 1;
+      continue;
     }
 
-    const maskedWhole = header + maskedBody + footer;
-    reportEntries.push({ file: filename, line: lineNo, key: null, rule: `${UNRECOGNIZED_FILE_RULE_PREFIX}:private_key_block`, before: whole, after: maskedWhole });
-    return maskedWhole;
-  });
+    const beginIdx = i;
+    let j = i + 1;
+    let endIdx = null;
+    let sawContent = false;
+    while (j < n) {
+      const s = lines[j].replace(LINE_ENDING, "");
+      if (END_KEY_LINE.test(s)) {
+        endIdx = j;
+        break;
+      }
+      if (isKeyMaterialLine(s)) {
+        if (s !== "") sawContent = true;
+        j += 1;
+        continue;
+      }
+      break;
+    }
+
+    if (endIdx === null && !sawContent) {
+      output.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const blockEnd = endIdx !== null ? endIdx + 1 : j;
+    const blockLines = lines.slice(beginIdx, blockEnd);
+    const maskedLines = maskKeyBlockLines(blockLines, endIdx !== null, reportEntries, filename, beginIdx + 1, registry);
+    output.push(...maskedLines);
+    i = blockEnd;
+  }
+
+  return output.join("");
 }
 
 // The lists detection actually consults. Equal to the base by default;

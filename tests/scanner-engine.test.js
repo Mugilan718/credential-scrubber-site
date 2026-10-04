@@ -1819,6 +1819,83 @@ await test("investigative, not a requirement: a PEM across .properties backslash
 });
 
 // -----------------------------------------------------------------------
+// BEGIN marker must start a line (leading whitespace/quote allowed), and
+// the no-END case only masks consecutive key-material lines.
+// -----------------------------------------------------------------------
+
+console.log("\nPEM detector edge cases - BEGIN-at-line-start, stop at first non-key-material line:");
+
+await test("(a) a mid-sentence mention of the marker in markdown prose is left untouched", () => {
+  const md =
+    "The PEM format starts with -----BEGIN RSA PRIVATE KEY----- and ends " +
+    "with the matching END marker.\n" +
+    "Second line unaffected.\n" +
+    "Third line, also untouched, still mentioning -----END RSA PRIVATE KEY----- in prose.\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "docs.md", content: md }]);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.strictEqual(sanitizedFiles[0].content, md);
+});
+
+await test("(b) a truncated key (BEGIN + base64 lines, no END, EOF) is fully masked", () => {
+  const truncated =
+    "-----BEGIN RSA PRIVATE KEY-----\n" +
+    "MIIEpQIBAAKCAQEA1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJ\n" +
+    "KLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "id_rsa_truncated", content: truncated }]);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:private_key_block");
+  const written = sanitizedFiles[0].content;
+  assert.ok(!written.includes("MIIEpQIBAAKCAQEA"));
+  assert.ok(!written.includes("KLMNOPQRSTUVWXYZ0123456789"));
+  assert.ok(written.startsWith("-----BEGIN RSA PRIVATE KEY-----\n"));
+  assert.strictEqual(written.split("\n").length, truncated.split(/\r?\n/).length);
+});
+
+await test("(c) BEGIN + base64 lines, then a prose paragraph, then EOF: key masked, prose kept", () => {
+  const mixed =
+    "-----BEGIN RSA PRIVATE KEY-----\n" +
+    "MIIEpQIBAAKCAQEA1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJ\n" +
+    "KLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ\n" +
+    "This is a prose paragraph explaining the key above in more detail.\n" +
+    "It continues for a couple more lines of ordinary text.\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "mixed.txt", content: mixed }]);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:private_key_block");
+  const written = sanitizedFiles[0].content;
+  assert.ok(!written.includes("MIIEpQIBAAKCAQEA"));
+  assert.ok(written.includes("This is a prose paragraph explaining the key above in more detail."));
+  assert.ok(written.includes("It continues for a couple more lines of ordinary text."));
+  assert.strictEqual(written.split("\n").length, mixed.split(/\r?\n/).length);
+});
+
+await test("a BEGIN marker alone, immediately followed by prose with no key material, is not treated as a block", () => {
+  const content =
+    "-----BEGIN RSA PRIVATE KEY-----\n" +
+    "This marker indicates where a key begins, as explained above.\n" +
+    "More prose continues here.\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "marker_then_prose.md", content }]);
+  assert.strictEqual(reportEntries.length, 0);
+  assert.strictEqual(sanitizedFiles[0].content, content);
+});
+
+await test("PEM encryption header lines (Proc-Type:, DEK-Info:) are treated as key material", () => {
+  const encrypted =
+    "-----BEGIN RSA PRIVATE KEY-----\n" +
+    "Proc-Type: 4,ENCRYPTED\n" +
+    "DEK-Info: AES-128-CBC,D54228DB5838F4A43B5E2184A3E1B2C1\n" +
+    "\n" +
+    "MIIEpQIBAAKCAQEA1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJ\n" +
+    "KLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ\n" +
+    "-----END RSA PRIVATE KEY-----\n";
+  const { reportEntries, sanitizedFiles } = scanFiles([{ path: "id_rsa_enc", content: encrypted }]);
+  assert.strictEqual(reportEntries.length, 1);
+  assert.strictEqual(reportEntries[0].rule, "fallback:private_key_block");
+  const written = sanitizedFiles[0].content;
+  assert.ok(!written.includes("MIIEpQIBAAKCAQEA"));
+  assert.strictEqual(written.split("\n").length, encrypted.split(/\r?\n/).length);
+});
+
+// -----------------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;
