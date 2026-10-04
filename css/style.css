@@ -554,5 +554,8 @@ a { color: inherit; text-decoration: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+  /* The universal selector alone doesn't match ::before/::after - without
+     listing them explicitly, a pseudo-element transition/animation (like
+     the FAQ page's chevron rotation) is invisible to this override. */
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
