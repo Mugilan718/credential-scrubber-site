@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>OG image source (not a published page)</title>
+<!--
+  Standalone render source for /og-image.png - a 1200x630 social-share
+  card. Rendered with Playwright (see tools/render-og-image.py in the
+  same folder) at exactly a 1200x630 viewport, screenshotting the
+  <body> with no scrollbars. Reuses the site's own palette/fonts/shield
+  motif (css/style.css's --bg-deep/--glow-cyan/--glow-violet, and the
+  shield+redaction-bars shape already used by favicon.svg and the
+  scanner page's shield-stage SVG) rather than inventing a new logo.
+  Not linked from any real page - purely a render source kept in the
+  repo so the image is reproducible.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-deep: #0A0E17;
+    --bg-panel: #11151F;
+    --ink: #E8EAF0;
+    --ink-soft: #9BA3B4;
+    --glow-cyan: #00E5C7;
+    --glow-violet: #7C4DFF;
+    --sans: 'Inter', sans-serif;
+    --display: 'Space Grotesk', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+    background: var(--bg-deep);
+    font-family: var(--sans);
+  }
+  .card {
+    position: relative;
+    width: 1200px;
+    height: 630px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      radial-gradient(900px 500px at 18% 8%, rgba(0,229,199,0.16), transparent 60%),
+      radial-gradient(900px 500px at 85% 95%, rgba(124,77,255,0.18), transparent 60%),
+      var(--bg-deep);
+  }
+  .grid-overlay {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(232,234,240,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(232,234,240,0.035) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+  .content {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 64px;
+    padding: 0 88px;
+  }
+  .shield-wrap {
+    flex-shrink: 0;
+    width: 240px;
+    height: 240px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .shield-visual {
+    width: 220px;
+    height: 220px;
+    filter: drop-shadow(0 18px 50px rgba(0,229,199,0.25));
+  }
+  .text {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    max-width: 740px;
+  }
+  .brand {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 64px;
+    line-height: 1.05;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .tagline {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: 30px;
+    line-height: 1.35;
+    color: var(--ink-soft);
+    max-width: 680px;
+  }
+  .accent-bar {
+    width: 84px;
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--glow-cyan), var(--glow-violet));
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="grid-overlay"></div>
+    <div class="content">
+      <div class="shield-wrap">
+        <svg class="shield-visual" viewBox="0 0 24 24">
+          <defs>
+            <linearGradient id="ogShieldGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#00E5C7"/>
+              <stop offset="100%" stop-color="#7C4DFF"/>
+            </linearGradient>
+          </defs>
+          <path d="M12 1.6 3 5.1v7.1c0 6.3 4 10.9 9 13.2 5-2.3 9-6.9 9-13.2V5.1L12 1.6z"
+                fill="url(#ogShieldGrad)" />
+          <rect x="7.6" y="10.3" width="8.8" height="2.1" rx="1" fill="#0A0E17"/>
+          <rect x="7.6" y="14.3" width="8.8" height="2.1" rx="1" fill="#0A0E17"/>
+        </svg>
+      </div>
+      <div class="text">
+        <div class="accent-bar"></div>
+        <div class="brand">Credential Scrubber</div>
+        <div class="tagline">Mask hardcoded secrets before you share code with AI</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

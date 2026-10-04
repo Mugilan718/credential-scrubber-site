@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://mugilan718.github.io/credential-scrubber-site/sitemap.xml
