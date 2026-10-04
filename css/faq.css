@@ -1,0 +1,180 @@
+/* ---------- FAQ page ---------- */
+
+.faq-main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 140px 24px 80px;
+}
+
+.faq-intro h1 {
+  font-size: 34px;
+  font-weight: 600;
+}
+
+.faq-intro code {
+  font-family: var(--mono, monospace);
+  font-size: 0.9em;
+  color: var(--ink);
+}
+
+.faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.faq-item {
+  background: var(--bg-panel);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.faq-item summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  cursor: pointer;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 16.5px;
+  list-style: none;
+}
+
+/* Remove the default marker (both engines) - the chevron icon below is
+   the single, consistently-styled indicator instead. */
+.faq-item summary::-webkit-details-marker { display: none; }
+.faq-item summary::marker { content: ""; }
+
+.faq-item summary::after {
+  content: "";
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  background: var(--glow-cyan);
+  -webkit-mask: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M9 6l6 6-6 6"/%3E%3C/svg%3E') center / contain no-repeat;
+  mask: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M9 6l6 6-6 6"/%3E%3C/svg%3E') center / contain no-repeat;
+  transform: rotate(90deg);
+  transition: transform 0.2s ease;
+}
+
+.faq-item:not([open]) summary:hover { background: rgba(255,255,255,0.03); }
+
+.faq-item[open] summary::after { transform: rotate(-90deg); }
+
+.faq-item[open] summary {
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.faq-answer {
+  padding: 4px 22px 22px;
+  color: var(--ink-soft);
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.faq-answer p { margin: 10px 0; }
+.faq-answer ul { margin: 10px 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.faq-answer li { padding-left: 2px; }
+.faq-answer strong { color: var(--ink); }
+
+.faq-answer code {
+  font-family: var(--mono, monospace);
+  font-size: 0.9em;
+  color: var(--glow-cyan);
+  background: rgba(0,229,199,0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.faq-answer pre {
+  background: var(--bg-deep);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+
+.faq-answer pre code {
+  background: none;
+  padding: 0;
+  color: var(--ink);
+}
+
+.faq-answer a { color: var(--glow-cyan); font-weight: 600; }
+.faq-answer a:hover { text-decoration: underline; }
+
+/* ---------- Still stuck? ---------- */
+
+.faq-still-stuck {
+  max-width: 640px;
+  margin: 56px auto 0;
+  padding-top: 32px;
+  border-top: 1px solid rgba(124,77,255,0.25);
+}
+
+.faq-still-stuck h2 {
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.faq-still-stuck > p a,
+.faq-security-line a {
+  color: var(--glow-cyan);
+  font-weight: 600;
+}
+
+.faq-still-stuck > p a:hover,
+.faq-security-line a:hover {
+  text-decoration: underline;
+}
+
+.faq-warning-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px 20px;
+  border-radius: 10px;
+  background: linear-gradient(160deg, rgba(242,84,91,0.14), rgba(242,84,91,0.04));
+  border: 1px solid rgba(242,84,91,0.35);
+}
+
+.faq-warning-box .icon {
+  color: #FF9B9B;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.faq-warning-box p {
+  margin: 0;
+  color: #F0C6C6;
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.faq-warning-box strong { color: #FFD4D4; }
+
+.faq-security-line {
+  margin-top: 18px;
+  color: var(--ink-soft);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.faq-security-line .icon {
+  color: var(--glow-violet);
+  margin-right: 6px;
+  vertical-align: -0.15em;
+}
+
+@media (max-width: 560px) {
+  .faq-main { padding: 120px 20px 60px; }
+  .faq-item summary { padding: 15px 16px; font-size: 15.5px; }
+  .faq-answer { padding: 2px 16px 18px; }
+}

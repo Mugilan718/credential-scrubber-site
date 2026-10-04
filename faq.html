@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Credential Scrubber — Frequently Asked Questions</title>
+<meta name="description" content="Answers to common questions about the Credential Scrubber online scanner and desktop app: what gets uploaded, how to verify your download, what Ignore does, and more." />
+<link rel="icon" type="image/svg+xml" href="favicon.svg" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Credential Scrubber — Frequently Asked Questions" />
+<meta property="og:description" content="Answers to common questions about the Credential Scrubber online scanner and desktop app." />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Credential Scrubber — Frequently Asked Questions" />
+<meta name="twitter:description" content="Answers to common questions about the Credential Scrubber online scanner and desktop app." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+<link rel="stylesheet" href="css/faq.css" />
+</head>
+<body>
+
+<!-- Shared icon sprite - hand-authored, stroke-based (24x24, currentColor),
+     same set/style used on index.html and the scanner page. -->
+<svg style="display:none" aria-hidden="true">
+  <symbol id="icon-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.3 3.9 1.8 18.5A1.6 1.6 0 0 0 3.2 21h17.6a1.6 1.6 0 0 0 1.4-2.5L13.7 3.9a1.6 1.6 0 0 0-2.8 0z"/>
+    <path d="M12 9.5v4.2"/>
+    <path d="M12 17v.01"/>
+  </symbol>
+  <symbol id="icon-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 2.5 4.5 5.5v5.5c0 5 3.2 8.5 7.5 10.5 4.3-2 7.5-5.5 7.5-10.5V5.5L12 2.5z"/>
+    <path d="M8.5 12l2.3 2.3L15.8 9"/>
+  </symbol>
+</svg>
+
+<nav class="topnav">
+  <a href="index.html" class="topnav-brand">Credential Scrubber</a>
+  <button class="nav-toggle" id="navToggle" type="button" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="navLinks">
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+  </button>
+  <div class="topnav-links" id="navLinks">
+    <a href="index.html#comic">How it leaks</a>
+    <a href="index.html#how-it-works">How it works</a>
+    <a href="index.html#research">Research</a>
+    <a href="faq.html">FAQ</a>
+    <a href="index.html#get-it">Get it</a>
+  </div>
+</nav>
+
+<main class="faq-main">
+  <div class="section-intro faq-intro">
+    <h1>Frequently asked questions</h1>
+    <p>Click any question to expand it. Each one has its own link, so you
+    can share a direct answer - right-click the question and copy its
+    link, or copy the page's address once it's open.</p>
+  </div>
+
+  <div class="faq-list">
+
+    <details class="faq-item" id="code-uploaded">
+      <summary>Does my code get uploaded anywhere?</summary>
+      <div class="faq-answer">
+        <p><strong>No, not with either version.</strong> The online scanner
+        runs entirely in your browser - scanning, redaction, and the
+        sanitized download are all produced client-side, and nothing is
+        sent to a server (that's what the "Runs in your browser — nothing
+        uploaded" badge on the scanner page means literally). The desktop
+        app is a small local web server on your own machine
+        (<code>http://127.0.0.1:5057</code>) with no network calls -
+        everything runs locally, and no data leaves that machine.</p>
+      </div>
+    </details>
+
+    <details class="faq-item" id="windows-warning">
+      <summary>Why does Windows say the desktop app is unrecognized or block it entirely?</summary>
+      <div class="faq-answer">
+        <p>The <code>.exe</code> is unsigned - code-signing certificates cost
+        money and aren't practical for a small open-source project to
+        maintain. Two different things can happen as a result:</p>
+        <ul>
+          <li><strong>Windows SmartScreen</strong> shows a dismissible
+          "unrecognized publisher" or "Windows protected your PC" warning.
+          This is expected for new, unsigned software and isn't by itself a
+          sign anything is wrong - you can choose to run it anyway after
+          verifying the checksum (see the next question).</li>
+          <li><strong>Smart App Control</strong>, or a managed Application
+          Control (WDAC/AppLocker) policy on a company-managed machine, can
+          block the executable <strong>outright, with no "Run anyway"
+          option</strong>. This is a stricter, non-dismissible response
+          that signing or a new release can't fix. If this happens, use
+          the <a href="scanner/index.html">online scanner</a> instead (no
+          download at all), or build the app yourself from source.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="faq-item" id="verify-download">
+      <summary>How do I verify my download is genuine?</summary>
+      <div class="faq-answer">
+        <p>Check its SHA-256 checksum against the value published in that
+        specific release's notes on the
+        <a href="https://github.com/Mugilan718/credential-scrubber/releases/latest">GitHub Releases page</a>.</p>
+        <p>On Windows:</p>
+        <pre><code>certutil -hashfile CredentialScrubber.exe SHA256</code></pre>
+        <p>On Mac/Linux:</p>
+        <pre><code>shasum -a 256 CredentialScrubber.exe</code></pre>
+        <p>If the output doesn't match the checksum published for that
+        release, don't run the file - re-download it, and if it still
+        doesn't match, open an issue.</p>
+      </div>
+    </details>
+
+    <details class="faq-item" id="what-ignore-does">
+      <summary>What does clicking "Ignore" on a finding actually do?</summary>
+      <div class="faq-answer">
+        <p>It restores the <strong>original, unmasked value</strong> in the
+        working copy, since that's the only way to stop the tool flagging
+        something you've confirmed isn't a real secret. Because of that,
+        it asks for confirmation first, and it can always be undone
+        afterward from the "Ignored findings" list (restoring the mask).
+        Nothing is downloadable yet at that point, either way - the
+        scanner's download flow is a separate, deliberate
+        "Generate sanitized file" step that only becomes available after
+        you click it, and any further change (another ignore, a restore,
+        a re-scan) marks that generated copy stale until you regenerate
+        it.</p>
+      </div>
+    </details>
+
+    <details class="faq-item" id="missed-secret">
+      <summary>Why might a secret not be found?</summary>
+      <div class="faq-answer">
+        <p>Detection is pattern-based, not a full understanding of your
+        code: it matches key names (like <code>password</code> or
+        <code>api_key</code>), shapes of known secret formats (AWS/GitHub/
+        Slack-style tokens, JWTs, connection strings, and similar), and -
+        in config files and multi-line string concatenation only, not
+        single-line code - a general high-entropy check. There are
+        documented gaps, such as JavaScript template literals that span
+        multiple lines, which aren't covered. This is a detection aid, not
+        a guarantee that every possible secret shape is caught.</p>
+      </div>
+    </details>
+
+    <details class="faq-item" id="found-real-secret">
+      <summary>I found a real secret in my results - what now?</summary>
+      <div class="faq-answer">
+        <p><strong>Rotate it.</strong> Masking a credential for sharing
+        doesn't undo the fact that it existed in your code, possibly in a
+        git history, a backup, or somewhere else you've already shared it.
+        Treat any real finding as compromised and issue a new one.</p>
+      </div>
+    </details>
+
+    <details class="faq-item" id="browser-support">
+      <summary>Which browsers does the online scanner work in?</summary>
+      <div class="faq-answer">
+        <p>The core flow - selecting a folder, scanning, reviewing
+        results, and downloading the sanitized copy - has been verified
+        working identically across Chromium, Firefox, and WebKit (the
+        engine behind Safari), with no page errors and a correctly
+        redacted download in all three.</p>
+        <p>One feature is Chromium-only (Chrome/Edge and similar): "Remember
+        a folder for next time," which uses the File System Access API.
+        It's feature-detected and simply hidden - not broken - in browsers
+        that don't support it; the drag-and-drop/"Choose folder" flow
+        works the same everywhere either way.</p>
+      </div>
+    </details>
+
+    <details class="faq-item" id="scan-history-storage">
+      <summary>Where is my scan history stored?</summary>
+      <div class="faq-answer">
+        <p>In the online scanner, scan history, the ignore list, and any
+        rule edits are stored only in that one browser, on that one
+        device (via IndexedDB) - nothing syncs across browsers or
+        devices, and it's lost if you clear that site's browser data.
+        Ignored values are kept as a one-way hash, never the real value,
+        so a changed value always reappears flagged rather than staying
+        silently hidden.</p>
+        <p>In the desktop app, scan history is kept in a local SQLite
+        database in your OS's per-user application-data directory, so it
+        persists across restarts on that machine.</p>
+      </div>
+    </details>
+
+    <details class="faq-item" id="online-vs-desktop">
+      <summary>Online scanner vs. desktop app - what's the difference?</summary>
+      <div class="faq-answer">
+        <p>Both use the same detection engine and both run entirely
+        locally. The main differences:</p>
+        <ul>
+          <li><strong>Install:</strong> the online scanner needs nothing -
+          open it in a browser. The desktop app is a Windows
+          <code>.exe</code>, or can be run from source on Mac/Linux.</li>
+          <li><strong>Output:</strong> the online scanner produces a
+          downloadable <code>.zip</code> via an explicit "Generate" step.
+          The desktop app writes the sanitized copy directly to an output
+          folder you choose (after a preview step).</li>
+          <li><strong>Git changed-files mode:</strong> only the desktop
+          app has it (scan just what's changed in a git repo, not the
+          whole project every time). The online scanner always does a
+          full pass.</li>
+          <li><strong>History persistence:</strong> the desktop app's
+          history survives restarts via a local database; the online
+          scanner's is per-browser and lost if that browser's site data
+          is cleared.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="faq-item" id="license">
+      <summary>What license is this under?</summary>
+      <div class="faq-answer">
+        <p>The detection engine and desktop app are licensed under the
+        <a href="https://github.com/Mugilan718/credential-scrubber/blob/main/LICENSE">GNU Affero General Public License v3.0 (AGPLv3)</a>.
+        Free to use, modify, and redistribute under its terms - see the
+        LICENSE file for the full legal text.</p>
+      </div>
+    </details>
+
+    <details class="faq-item" id="report-bug-or-security">
+      <summary>How do I report a bug, or a security issue?</summary>
+      <div class="faq-answer">
+        <p>For a regular bug or a question, open a
+        <a href="https://github.com/Mugilan718/credential-scrubber/issues/new/choose">GitHub issue</a> -
+        both the bug report and question forms require confirming you've
+        replaced any real secrets with fake values first.</p>
+        <p>For a <strong>security vulnerability</strong>, use the
+        <a href="https://github.com/Mugilan718/credential-scrubber/security/advisories/new">private security advisory</a> form
+        instead of a public issue - see the "Still stuck?" section below
+        for why that distinction matters.</p>
+      </div>
+    </details>
+
+  </div>
+
+  <section class="faq-still-stuck">
+    <h2>Still stuck?</h2>
+    <p>Open a <a href="https://github.com/Mugilan718/credential-scrubber/issues/new/choose">GitHub issue</a> -
+    choose the bug report or question form.</p>
+
+    <div class="faq-warning-box">
+      <svg class="icon icon-md"><use href="#icon-alert"/></svg>
+      <p><strong>Never paste real secrets, passwords, keys, tokens, or
+      internal hostnames into an issue.</strong> GitHub issues are public.
+      Use fake, obviously-made-up values to describe what happened.</p>
+    </div>
+
+    <p class="faq-security-line"><svg class="icon"><use href="#icon-shield"/></svg> Found a security
+    vulnerability instead? Report it privately via a
+    <a href="https://github.com/Mugilan718/credential-scrubber/security/advisories/new">GitHub security advisory</a> -
+    not a public issue.</p>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <p>Free and open-source. Not a substitute for rotating a credential that's already been exposed.</p>
+  <p class="footer-links"><a href="https://github.com/Mugilan718/credential-scrubber/blob/main/ai-evaluation/experiment/analysis/results_and_discussion.md" target="_blank" rel="noopener noreferrer">Read the AI evaluation research →</a></p>
+</footer>
+
+<script src="js/interactions.js"></script>
+</body>
+</html>
