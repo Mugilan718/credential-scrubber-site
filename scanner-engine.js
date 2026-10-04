@@ -1223,13 +1223,23 @@ async function collectFilesFromDirectoryHandle(dirHandle, options = {}) {
         await walk(entry, entryPath);
       } else if (entry.kind === "file") {
         if (isBinaryByName(entryPath)) {
-          skipped.push({ path: entryPath, reason: "binary" });
+          // `file` (when retrievable) is the real binary-safe File/Blob,
+          // kept so the caller can still mirror it into a generated zip
+          // untouched - the same thing handleFileList()'s rawFilesForZip
+          // already does for the drag-drop/file-input read path. Its
+          // absence (getFile() itself failing) is not fatal - the file is
+          // still reported as skipped, just not zip-able.
+          try {
+            skipped.push({ path: entryPath, reason: "binary", file: await entry.getFile() });
+          } catch (e) {
+            skipped.push({ path: entryPath, reason: "binary" });
+          }
           continue;
         }
         try {
           const file = await entry.getFile();
           if (file.size > maxBytes) {
-            skipped.push({ path: entryPath, reason: "oversize" });
+            skipped.push({ path: entryPath, reason: "oversize", file });
             continue;
           }
           const content = await file.text();

@@ -1169,7 +1169,9 @@ await test("binary-by-name files are skipped, not read", async () => {
     isBinaryByName: (name) => name.toLowerCase().endsWith(".png"),
   });
   assert.strictEqual(files.length, 1);
-  assert.deepStrictEqual(skipped, [{ path: "logo.png", reason: "binary" }]);
+  assert.strictEqual(skipped.length, 1);
+  assert.strictEqual(skipped[0].path, "logo.png");
+  assert.strictEqual(skipped[0].reason, "binary");
 });
 
 await test("oversized files are skipped, not read", async () => {
@@ -1178,7 +1180,65 @@ await test("oversized files are skipped, not read", async () => {
   const { files, skipped } = await collectFilesFromDirectoryHandle(dir, { maxFileBytes: 50 });
   assert.strictEqual(files.length, 1);
   assert.strictEqual(files[0].path, "small.txt");
-  assert.deepStrictEqual(skipped, [{ path: "big.txt", reason: "oversize" }]);
+  assert.strictEqual(skipped.length, 1);
+  assert.strictEqual(skipped[0].path, "big.txt");
+  assert.strictEqual(skipped[0].reason, "oversize");
+});
+
+await test("skipped entries carry the real File object, binary-safe and ready to mirror into a generated zip - both binary-by-name and oversized", async () => {
+  const dir = buildFakeDirectory({
+    "logo.png": "fake-binary-bytes-should-pass-through-untouched",
+    "big.txt": "x".repeat(100),
+    "small.txt": "ok",
+  });
+  const { skipped } = await collectFilesFromDirectoryHandle(dir, {
+    isBinaryByName: (name) => name.toLowerCase().endsWith(".png"),
+    maxFileBytes: 50,
+  });
+  const byPath = Object.fromEntries(skipped.map((s) => [s.path, s]));
+  assert.ok(byPath["logo.png"].file, "binary-by-name skip still retrieves the File object");
+  assert.strictEqual(await byPath["logo.png"].file.text(), "fake-binary-bytes-should-pass-through-untouched");
+  assert.ok(byPath["big.txt"].file, "oversize skip still retrieves the File object");
+  assert.strictEqual(await byPath["big.txt"].file.text(), "x".repeat(100));
+});
+
+await test("remembered-folder (directory-handle) scan: skipped files reach the exact shape scanner-ui.js mirrors into the generated zip, byte-identical - and are listed in the notice", async () => {
+  // Reproduces scanDirectoryHandle()'s own wiring (scanner-ui.js) at the
+  // engine level, since JSZip/real zip generation itself is browser-only
+  // and not exercised by this plain-Node test script (same documented
+  // limitation as showDirectoryPicker()/permission prompts above) - this
+  // confirms the DATA reaching that point is correct and byte-identical,
+  // which is what "the zip would contain it untouched" actually depends on.
+  const binaryContent = "fake-binary-bytes-should-pass-through-untouched";
+  const oversizeContent = "x".repeat(100);
+  const dir = buildFakeDirectory({
+    "logo.png": binaryContent,
+    "big.txt": oversizeContent,
+    "normal.properties": "password=fakeHandleZip789",
+  });
+  const { files: readable, skipped } = await collectFilesFromDirectoryHandle(dir, {
+    isBinaryByName: (name) => name.toLowerCase().endsWith(".png"),
+    maxFileBytes: 50,
+  });
+
+  const rawFilesForZip = skipped.filter((s) => s.file).map((s) => (
+    { path: s.path, content: s.file, binary: true, rawFile: true, unscannedReason: s.reason }
+  ));
+  const unscanned = skipped.map((s) => ({ path: s.path, reason: s.reason }));
+
+  assert.strictEqual(rawFilesForZip.length, 2, "both the binary and the oversized file reach the zip-bound list");
+  const zipByPath = Object.fromEntries(rawFilesForZip.map((f) => [f.path, f]));
+  assert.strictEqual(await zipByPath["logo.png"].content.text(), binaryContent, "byte-identical to the original");
+  assert.strictEqual(await zipByPath["big.txt"].content.text(), oversizeContent, "byte-identical to the original");
+
+  assert.deepStrictEqual(
+    unscanned.sort((a, b) => a.path.localeCompare(b.path)),
+    [{ path: "big.txt", reason: "oversize" }, { path: "logo.png", reason: "binary" }],
+    "both are listed in the notice, by the same reasons"
+  );
+
+  const scan = scanFiles(readable);
+  assert.strictEqual(scan.reportEntries.length, 1); // only normal.properties was actually scanned
 });
 
 await test("end-to-end: files collected from a directory handle feed straight into scanFiles()", async () => {

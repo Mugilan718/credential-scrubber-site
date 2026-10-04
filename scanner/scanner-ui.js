@@ -120,12 +120,14 @@
   let pendingRawFilesForZip = [];
   // Files that never even reached scanFiles() - binary-by-name or over
   // MAX_FILE_BYTES, caught at the read stage (see handleFileList()/
-  // collectFilesFromDirectoryHandle() above) - as {path, reason}, purely
-  // for the "N files were copied without being checked" notice; distinct
-  // from pendingRawFilesForZip, which some of these also end up in (to be
-  // mirrored into the generated zip) and some don't (the directory-handle
-  // read path has never included its own skips in the zip - see its
-  // assignment below) - this list exists regardless, for the notice.
+  // collectFilesFromDirectoryHandle() above) - as {path, reason}, for the
+  // "N files were copied without being checked" notice. Every one of
+  // these also ends up in pendingRawFilesForZip (mirrored into the
+  // generated zip untouched, the same for both the drag-drop/file-input
+  // and directory-handle read paths - see collectFilesFromDirectoryHandle()'s
+  // retained `file` object), except the rare case where the file object
+  // itself couldn't be retrieved at all - still reported here, just not
+  // zip-able.
   let pendingUnscannedFiles = [];
   // All paths seen this time round (before any filtering choice) and the
   // saved filter record (if any) a saved-selection prompt is currently
@@ -1115,12 +1117,19 @@
       maxFileBytes: MAX_FILE_BYTES,
       isBinaryByName,
     });
-    // Unlike handleFileList()'s rawFilesForZip, a skipped file here was
-    // never read into memory at all (see collectFilesFromDirectoryHandle()'s
-    // size/binary checks happening before any read) - nothing to carry
-    // into the zip, but `skipped` is still exactly what the "N files were
-    // copied without being checked" notice needs.
-    await presentFolderTree(readable, [], skipped);
+    // A skipped entry carries the real File object when it could be
+    // retrieved (see collectFilesFromDirectoryHandle()) - mirrored into the
+    // zip exactly like handleFileList()'s rawFilesForZip already does for
+    // the drag-drop/file-input read path, so "N files were copied without
+    // being checked" is true here too, not just a notice with nothing
+    // behind it. The rare entry whose File couldn't be retrieved at all
+    // (getFile() itself failed) has no `file` and is left out of the zip,
+    // but still appears in the notice via `unscanned`.
+    const rawFilesForZip = skipped.filter((s) => s.file).map((s) => (
+      { path: s.path, content: s.file, binary: true, rawFile: true, unscannedReason: s.reason }
+    ));
+    const unscanned = skipped.map((s) => ({ path: s.path, reason: s.reason }));
+    await presentFolderTree(readable, rawFilesForZip, unscanned);
   }
 
   if (pickRememberedFolderBtn) {
@@ -1245,8 +1254,10 @@
             });
             const notSkipped = (f) => !f.path.split("/").some((seg) => SKIP_DIRS.has(seg));
             pendingReadable = freshReadable.filter(notSkipped);
-            pendingRawFilesForZip = []; // handle-based reads never produce rawFilesForZip - see presentFolderTree()
-            pendingUnscannedFiles = freshSkipped.filter(notSkipped);
+            pendingRawFilesForZip = freshSkipped.filter(notSkipped).filter((s) => s.file).map((s) => (
+              { path: s.path, content: s.file, binary: true, rawFile: true, unscannedReason: s.reason }
+            ));
+            pendingUnscannedFiles = freshSkipped.filter(notSkipped).map((s) => ({ path: s.path, reason: s.reason }));
             pendingAllPaths = pendingReadable.map((f) => f.path);
             currentTree = buildFileTree(pendingAllPaths);
             treeIndex = indexFileTree(currentTree);
